@@ -271,10 +271,22 @@ deleted keys keep their historical identity. Older records appear as
 **key not recorded**, never inferred from today's configured key.
 These are upstream credentials, not keys clients use to call Magpie.
 
-The CSV's `cache_write_tokens` is still every cache write; the last two
+The CSV's `cache_write_tokens` is still every cache write; the two
 columns, `cache_write_5m_tokens` and `cache_write_1h_tokens`, split it by how
 long Anthropic keeps it (a record from before the split is all 5-minute).
 The app shows the split on a request's Cache and the usage tiles' tooltips.
+
+**Requests and failures** count requests, each once by how it ended: a
+request failed when the agent got an error. One that a later try answered
+(the next member of a group, another account) is not a failure; the Usage
+page, the Requests card, its rankings and group rows, and `magpie usage`
+count it as answered on a retry (`retried` in the JSON). On the Requests
+card each count is a button for its requests in the list below (the
+Failed and Retried filters, `failed=1` and `retried=1`). A try a vendor
+refused or turned away keeps its own row, for what it billed and why, marked
+handed on, and isn't counted as a request. The CSV's last columns are
+`tries` (on the final row, when the request took more than one) and
+`handed_on`.
 
 **Output speed** (tok/s on the Usage and Routing pages, `magpie usage`) is
 output tokens over the time after the first token, summed per request: the
@@ -301,16 +313,36 @@ shows the least its reply wrote at instead (`≥98 tok/s`): its output tokens
 over that whole time, the wait for the first token in it, so the speed after
 the first token is never under it. Only a reply of 1,000 tokens or more
 written over a second or more shows one; a shorter reply's wait is too much
-of its time to tell anything. Only Claude Code's and Claude Desktop's rows
-show one: their line that asked for a reply is written before it is sent. A
-Codex call in a turn of several is timed from the last tool output before
-its token count, and Codex can write the output of a tool that call itself
-asked for before the count, so its time can begin inside the call and a
-floor from it could read high; it shows none.
-A call whose session file timed it (a Codex
-turn of one call) shows its own speed as before. The floor is the row's
-alone: the period's output speed, the Speed trend and `magpie usage` count
-timed calls only.
+of its time to tell anything; a count of tokens bounds that share, a
+duration doesn't (a 5 s reply can be 4 s of wait). Claude Code's, Claude
+Desktop's and Codex's rows show one: Claude's line that asked for a reply is
+written before it is sent, and a Codex call in a turn of several is timed
+from what the model had last been given before the call's first output
+item to its last, never from the output of a tool the call itself ran,
+which an older rollout writes before the call's token count. OpenCode's rows
+show none.
+A call whose session file timed it (a Codex turn of one call) shows its own
+speed as before. When that call reasoned, the file has its first token but
+not its first text, so no speed is measured; it shows the least its answer
+wrote at instead: its output less the reasoning, all written after the first
+token, over the time from the first token to its end. Its whole output over
+that time would count reasoning written before the first token and read
+high. A floor never mixes into a measured speed: the Speed trend and
+`magpie usage` count timed calls only.
+
+A group's speed (a row of the Usage page's ranking, by model, provider or
+agent, its Output speed card, and the overview's lists) says how many
+replies it is of, by one rule: with replies whose speed was measured, their
+speed and how many they are (`125 tok/s (1)`, not beside "260 requests"
+alone); with rows that tell a floor, the least those wrote at and how many
+(`≥100 tok/s (30)`); with both, both, the measured first
+(`125 tok/s (1) · ≥50 tok/s (259)`), as a few measured replies may not
+stand for the rest and a floor is no measure; with neither, nothing. The
+Output speed card shows the measured speed as its figure and the floor
+under it. The tooltip says what each is of. A ranking by speed orders and
+bars a group by its measured speed, or its floor when it has none
+(`usage.Totals` `decode_n`, `floor_out`, `floor_ms`, `floor_n`;
+`usage.Row.Floor`).
 
 It lists **accounts** too: each Codex, Claude or other subscription account's
 tokens and cost, by the account that actually answered — the one that took
@@ -445,7 +477,10 @@ reset stop counting, so it doesn't drift off the calendar. The reset is
 stored with the key (`since` in caller-keys.json, magpie's own: a value a
 client sends is ignored), so it survives a restart; the usage log itself is
 untouched. Keys saved before keep their JSON as it was.
-A key can read its own status with `GET /v1/magpie/limit`. Requests from
+A key can read its own status with `GET /v1/magpie/limit`; it is told its
+own and no other key's, whatever the request names. A magpie that has this
+one as a Remote magpie provider shows each of its keys' limits on its
+Usage page this way (#1547). Requests from
 this computer that send no gateway key are not limited; a gateway key used
 from this computer is.
 
@@ -1350,8 +1385,12 @@ it.
 The gateway listens on `127.0.0.1:3425` (`MAGPIE_ADDR` changes it) and starts
 with the app; `magpie serve` runs it alone. For reverse-proxied or container
 deployments, set `MAGPIE_PUBLIC_URL=https://magpie.example.com` to the base
-URL shown in the console and CLI, including connection examples. Local
-agent configs still use the local gateway address.
+URL shown in the console and CLI, including connection examples. While
+other machines are let in (Share on local network, or a `MAGPIE_ADDR` on
+the network), the Gateway page's Connect starts at it until you pick
+another address there, Settings › About lists it beside the local URL, and
+`magpie web` shows it as the gateway's address. Local agent configs still
+use the local gateway address.
 
 Building an app or agent that should use magpie, or get a row on the
 Agents page: see [Integrating your app or agent](integrating.md).
@@ -1451,7 +1490,7 @@ machine), with every session in `sessions` where the window's lists the
 top 100 by tokens; `sessionCount` is how many there are. `GET /v1/magpie/usage/requests` is its requests a page at a time
 (`offset`, `limit` up to 500), with the same filters as the Requests log:
 `period`, `day`, `agent`, `provider`, `model`, `account`, `callerKey`,
-`purpose`, `failed`, `q`, `via`, `computer`. What was said in a call is not
+`purpose`, `failed`, `retried`, `q`, `via`, `computer`. What was said in a call is not
 in either. Like `/v1/magpie/quotas`, they answer this machine, and another
 only with a gateway key. A key held to a budget, to some models or to some
 accounts is told its own calls alone: `/v1/magpie/usage` refuses it with a

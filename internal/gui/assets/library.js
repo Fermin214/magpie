@@ -1357,7 +1357,7 @@
     who.append(nm, healthEl(s.name));
     const sub = el("div", "sub mono", serverLine(s));
     sub.title = serverLine(s);
-    who.append(sub);
+    who.append(sub, toolsEl(s.name));
     row.append(mark(s.icon, s.transport === "stdio" ? GLYPH.cmd : GLYPH.web), who,
       agentChips(all, s.agents, chipsChange("servers/agents", s.name, "servers", (x) => serverRow(x, all)), { problems: s.problems, blocked: sseBlocked(s), all: true }));
     if (picking) return pickRow(row, s.name);
@@ -1369,19 +1369,115 @@
   // Whether a server works, as magpie found by connecting to it: started
   // (or reached) and asked for its tools. Its row shows it as a dot and a
   // few words, the whole reason in its tooltip; a click checks it again.
+  // A server that listed its tools shows them instead, by name and what
+  // each says it does (nf1qaz2w on Discord), with Check again under them.
   const health = new Map(); // name → { key: the server as checked, h: what was found, null while checking }
+  const toolsOpen = new Set(); // the servers whose tools are shown
   const healthKey = (s) => JSON.stringify([s.transport, s.command, s.args, s.env, s.url, s.headers, s.signIn]);
+  const toolList = (name) => { const h = health.get(name)?.h; return h?.state === "ok" ? h.toolList || [] : []; };
+  function recheck(name) {
+    const s = lib.servers.find((x) => x.name === name);
+    if (s && health.get(name)?.h) checkHealth([s], true);
+  }
   function healthEl(name) {
     const b = el("button", "lib-health");
     b.type = "button";
     b.dataset.server = name;
     b.onclick = (e) => {
       e.stopPropagation(); // the row opens the editor
-      const s = lib.servers.find((x) => x.name === name);
-      if (s && health.get(name)?.h) checkHealth([s], true);
+      if (!toolList(name).length) return recheck(name);
+      if (toolsOpen.has(name)) toolsOpen.delete(name); else toolsOpen.add(name);
+      paintHealth(name);
     };
     paintHealth(b);
     return b;
+  }
+  // toolsEl is the list a server's status opens: filled by paintHealth
+  function toolsEl(name) {
+    const box = el("div", "lib-tools");
+    box.dataset.server = name;
+    box.hidden = true;
+    box.onclick = (e) => e.stopPropagation(); // reading or selecting it opens no editor
+    paintTools(box);
+    return box;
+  }
+  function paintTools(box) {
+    const name = box.dataset.server, list = toolList(name);
+    // while it is checked again the list stays as it was, so nothing under
+    // the click moves until the answer comes
+    if (health.get(name) && !health.get(name).h && !box.hidden) return;
+    box.hidden = !(toolsOpen.has(name) && list.length);
+    if (box.hidden) return box.replaceChildren();
+    const ul = el("ul", "lib-toollist");
+    const off = toolsOffOf(name);
+    for (const tl of list) {
+      const li = el("li", "lib-tool" + (off.includes(tl.name) ? " off" : ""));
+      const txt = el("div", "lib-tooltxt");
+      txt.append(el("span", "lib-toolname mono", tl.name));
+      if (tl.description) txt.append(el("span", "lib-tooldesc", tl.description));
+      li.append(txt, toolSwitch(name, tl.name, !off.includes(tl.name)));
+      ul.append(li);
+    }
+    const parts = [ul];
+    // the agents given it that can't leave out a single tool get them all,
+    // which is said here rather than shown as off for them too
+    const cant = (lib.servers.find((s) => s.name === name)?.agents || []).map(agentOf).filter((a) => a && a.mcp && !a.toolsOff);
+    if (cant.length) parts.push(el("p", "lib-toolcant", t("{agents} can't turn off single tools: they get every tool of the server.", { agents: cant.map((a) => a.name).join(", ") })));
+    const foot = el("div", "lib-toolfoot");
+    const h = health.get(name).h;
+    if (h.tools > list.length) foot.append(el("span", "note", t("{n} more not shown", { n: h.tools - list.length })));
+    foot.append(el("span", "grow"), button(t("Check again"), "", () => recheck(name)));
+    parts.push(foot);
+    box.replaceChildren(...parts);
+  }
+  // Each tool has a switch (nf1qaz2w on Discord): one turned off is left
+  // out by the agents given the server that can leave out a single tool.
+  // A click flips its own switch at once and nothing else on the page, so
+  // the list doesn't move under it; quick clicks are sent as one.
+  const toolsSending = new Map(); // server → { want: the tools off, as last clicked }
+  const toolsOffOf = (name) => toolsSending.get(name)?.want || lib.servers.find((s) => s.name === name)?.disabledTools || [];
+  function toolSwitch(name, tool, on) {
+    const s = toggle(on, t("{tool} on", { tool }), () => {});
+    s.dataset.tool = tool;
+    s.onclick = (e) => {
+      e.stopPropagation();
+      const now = s.getAttribute("aria-checked") !== "true";
+      s.classList.toggle("on", now);
+      s.setAttribute("aria-checked", String(now));
+      s.closest("li")?.classList.toggle("off", !now);
+      const cur = toolsOffOf(name);
+      setToolsOff(name, now ? cur.filter((x) => x !== tool) : [...new Set([...cur, tool])].sort());
+    };
+    return s;
+  }
+  async function setToolsOff(name, want) {
+    const w = toolsSending.get(name);
+    if (w) { w.want = want; return; }
+    const me = { want };
+    toolsSending.set(name, me);
+    let sent = null, v = null;
+    try {
+      while (!sent || sent.join("\n") !== me.want.join("\n")) {
+        sent = me.want;
+        v = await api("library/servers/tools", { name, names: sent });
+      }
+      toolsSending.delete(name);
+      take(v);
+      report(v, t("Tools of {name} saved", { name }));
+    } catch (e) {
+      toolsSending.delete(name);
+      status(e.message, "err");
+      // the switches go back to what the library has
+      for (const box of page.querySelectorAll(`.lib-tools[data-server="${CSS.escape(name)}"]`)) {
+        const off = toolsOffOf(name);
+        for (const s of box.querySelectorAll(".lib-switch[data-tool]")) {
+          const on = !off.includes(s.dataset.tool);
+          s.classList.toggle("on", on);
+          s.setAttribute("aria-checked", String(on));
+          s.closest("li")?.classList.toggle("off", !on);
+        }
+      }
+    }
   }
   async function checkHealth(list, fresh) {
     if (!list.length) return;
@@ -1434,6 +1530,7 @@
     for (const b of boxes) {
       const e = health.get(b.dataset.server);
       b.hidden = !e;
+      b.removeAttribute("aria-expanded");
       if (!e) continue;
       if (!e.h) {
         b.className = "lib-health checking";
@@ -1444,8 +1541,15 @@
       const [text, tip] = healthWords(e.h, lib.servers.find((s) => s.name === b.dataset.server));
       b.className = "lib-health " + (e.h.state === "ok" ? "ok" : e.h.state === "auth" ? "auth" : "err");
       b.replaceChildren(el("span", "", text));
-      b.title = tip + "\n" + t("Click to check again");
+      if (toolList(b.dataset.server).length) {
+        const open = toolsOpen.has(b.dataset.server);
+        b.classList.add("has-list");
+        b.setAttribute("aria-expanded", String(open));
+        b.title = tip + "\n" + (open ? t("Click to hide them") : t("Click to see them"));
+      } else b.title = tip + "\n" + t("Click to check again");
     }
+    const name = typeof x === "string" ? x : x.dataset.server;
+    for (const box of page.querySelectorAll(`.lib-tools[data-server="${CSS.escape(name)}"]`)) paintTools(box);
   }
 
   // magpie's sign-in to a remote server (#615): signed in once here, and
