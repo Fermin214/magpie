@@ -2284,7 +2284,7 @@
     chev.append(svg(CHEV_R, 11, 1.7));
     const pic = g.repo ? mark(g.skills.find((s) => s.icon)?.icon, GLYPH.skill) : glyph(g.mine ? GLYPH.skill : GLYPH.folder);
     if (picking) head.append(pickAll(hits));
-    head.append(pic, who, tags, have, acts, chev);
+    head.append(chev, pic, who, tags, acts, have);
     head.title = folded ? t("Show its skills") : t("Hide its skills");
     head.onclick = () => {
       if (filtering) { if (folded) unfiltered.delete(g.key); else unfiltered.add(g.key); }

@@ -4,7 +4,8 @@
 // skill's name and every group's repository were squeezed to nothing and
 // the group heads read as more of the same rows. Each name is shown, the
 // chips are kept inside the row, and a group's head names its repository
-// and looks unlike the skills under it. English and Chinese; the API is
+// and looks unlike the skills under it. All and the agent chips line up
+// across headings and skills, including on hover and focus. English and Chinese; the API is
 // faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -50,12 +51,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert(["chromium", "webkit"].includes(engine), "BROWSER must be chromium or webkit");
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chromium" }));
     t.after(() => browser.close());
-    for (const lang of ["en", "zh"]) for (const width of [866, 560]) {
-      await t.test(`${lang} ${width}px`, async () => {
+    for (const lang of ["en", "zh"]) for (const width of [866, 722, 560]) for (const count of [10, 30]) {
+      await t.test(`${lang} ${width}px, ${count} agents`, async () => {
         const state = {
           lib: {
             dir: `${HOME}/.magpie/library`, backups: `${HOME}/.magpie/backups`, home: HOME,
-            agents: structuredClone(AGENTS),
+            agents: structuredClone(AGENTS.slice(0, count)),
             instructions: { agents: [], sets: [] }, servers: [], foundServers: [], projects: [], foundSkills: [], problems: [],
             skills: structuredClone(SKILLS),
           },
@@ -92,12 +93,41 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert(r.nameShown, `${r.text}: its name is ${r.nameW}px wide, squeezed out of its row`);
           assert(r.chipsIn, `${r.text}: its agents run out of its row`);
         }
+        await aligned(v);
+        const all = v.locator(".lib-grouphead .lib-ag.all").first();
+        await all.hover();
+        await aligned(v);
+        await all.focus();
+        await aligned(v);
         // a group's head is not one more skill row
         for (const h of heads) assert(h.bg !== skills[0].bg || h.weight !== skills[0].weight, `${h.text}: its head looks like a skill's row`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the page scrolls sideways");
         assert.deepEqual(errors, []);
+        if (process.env.ARTIFACT_DIR && lang === "zh" && width === 722 && count === 10) {
+          await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+          await page.mouse.move(0, 0);
+          await all.blur();
+          await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-skills-aligned.png`) });
+        }
         await ctx.close();
       });
     }
   });
+}
+
+async function aligned(view) {
+  const positions = await view.locator(".lib-group .lib-row > .lib-agents").evaluateAll((boxes) => boxes.map((box) => {
+    const all = box.querySelector(".all"), rect = all.getBoundingClientRect();
+    const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+    return {
+      name: box.parentElement.querySelector(".name").textContent,
+      all: rect.x, right: box.getBoundingClientRect().right,
+      hit: y < 0 || y >= innerHeight || document.elementFromPoint(x, y)?.closest("button") === all,
+    };
+  }));
+  for (const p of positions) {
+    assert.ok(Math.abs(p.all - positions[0].all) <= 1, `${p.name}: All is not aligned with the group (${p.all} vs ${positions[0].all})`);
+    assert.ok(Math.abs(p.right - positions[0].right) <= 1, `${p.name}: agent chips end in a different column: ${JSON.stringify(positions)}`);
+    assert.ok(p.hit, `${p.name}: All is covered by another element`);
+  }
 }

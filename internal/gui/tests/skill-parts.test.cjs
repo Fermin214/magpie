@@ -86,6 +86,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await v.locator(".lib-subhead").first().waitFor();
           const heads = await v.locator(".lib-subhead").evaluateAll((hs) => hs.map((h) => [h.querySelector(".name").textContent, h.querySelector(".sub").textContent]));
           assert.deepEqual(heads, c.heads(L[lang]));
+          const folded = v.locator(".lib-subhead:not(.open)").first();
+          if (await folded.count()) await folded.click();
+          await v.locator(".lib-skill").first().waitFor();
+          const columns = await v.locator(".lib-row > .lib-agents .all").evaluateAll((chips) => chips.map((chip) => chip.getBoundingClientRect().x));
+          assert.ok(columns.length > heads.length, "checks both part headings and their skills");
+          assert.ok(columns.every((x) => Math.abs(x - columns[0]) <= 1), `All is not aligned across parts and skills: ${columns}`);
           assert.deepEqual(errors, []);
           await ctx.close();
         });

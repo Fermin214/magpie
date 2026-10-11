@@ -488,6 +488,8 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 /* a group's head is its card's title, not one more skill (#936): shaded,
    its repository in bold, its chips cut out of the shade */
 .lib-row.lib-grouphead { background: var(--card-2); }
+/* Match the skill rows' content width so All and the agent chips line up. */
+.lib-group > .row.lib-grouphead { padding: 7px 10px 7px 12px; gap: 11px; }
 .lib-row.lib-grouphead.click:hover { background: color-mix(in srgb, var(--card-2) 70%, var(--pill)); }
 .lib-grouphead .name, .lib-grouphead .name.mono { font-weight: 600; }
 .lib-grouphead > .lib-agents .lib-ag:not(:focus-visible) { outline-color: var(--card-2); }
@@ -526,7 +528,7 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .lib-vl > .lib-skill .sub { display: block; white-space: nowrap; -webkit-line-clamp: none; }
 .lib-vl > .lib-skill .lib-src { margin-top: 2px; }
 /* a part of a group: the folder its skills sit in, or the start of their names */
-.lib-vl > .row.lib-subhead { height: 36px; min-height: 0; padding: 0 12px 0 14px; gap: 8px; }
+.lib-vl > .row.lib-subhead { height: 36px; min-height: 0; padding: 0 10px 0 12px; gap: 8px; }
 .lib-subhead { background: var(--card-2); }
 .lib-subhead .name { font-size: 12px; color: var(--fg-2); }
 .lib-subhead .name.mono { font: var(--code-style, normal) 500 11.5px var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); }
