@@ -305,6 +305,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await t.test(`${lang} ${width}: desktop matches ${base}`, async () => {
           const current = await open(browser, lang, width, { touch: false });
           const original = await open(browser, lang, width, { touch: false, original: true });
+          // The fork intentionally adds one tab. Compare the original pages with
+          // that tab hidden on both sides; favorites has its own navigation tests.
+          for (const page of [current, original]) await page.addStyleTag({ content: '#nav [data-view="agenthub-favorites"] { display: none !important; }' });
           try {
             for (const view of views) {
               if (view === "agents" && !baselineFile("app.js").includes("function connectPanel")) continue;

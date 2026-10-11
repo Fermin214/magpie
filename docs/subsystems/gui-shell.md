@@ -182,3 +182,8 @@ BROWSER=webkit node --test internal/gui/tests/click-scroll.test.cjs
 webkit`). Set `NODE_PATH` when Playwright is installed outside the repo. The
 Test workflow in CI does not run this suite, so a GUI change must run it
 locally and report the result. See [`tests/README.md`](../../internal/gui/tests/README.md).
+
+## Fork addition: AgentHub favorites
+
+This fork adds an isolated Favorites view and management API. See
+[its contract and upstream integration checklist](../agenthub-favorites.md).

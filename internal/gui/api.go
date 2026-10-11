@@ -996,6 +996,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	sessionManageRoutes(mux, w)
 	backupRoutes(mux, w)
 	archiveRoutes(mux)
+	agenthubFavoritesRoutes(mux)
 	libraryRoutes(mux, w)
 	updateRoutes(mux, w)
 	whatsNewRoutes(mux)
