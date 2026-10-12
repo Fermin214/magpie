@@ -10,12 +10,13 @@ const languages = {
  en: { add: "New prompt", repos: "Repositories", repo: "New repository", save: "Save", cancel: "Cancel", discard: "Discard", more: "Import / export", import: "Import JSON", confirm: "Import", reload: "Reload favorites" },
  zh: { add: "新增 Prompt", repos: "仓库", repo: "新增仓库", save: "保存", cancel: "取消", discard: "丢弃", more: "导入 / 导出", import: "导入 JSON", confirm: "导入", reload: "重新加载" },
 };
-async function fixture(page, lang = "en") {
+async function fixture(page, lang = "en", { web = true } = {}) {
  const state = { data: doc(), saves: 0, copies: [], reads: 0, failSave: false, failRead: false, holdSave: null, holdRead: null, readGate: null };
  await page.route("http://magpie.test/**", async (r) => {
   const u = new URL(r.request().url()), p = u.pathname;
   const json = (d, status = 200) => r.fulfill({ json: d, status });
-  if (p === "/boot.js") return r.fulfill({ contentType: "text/javascript", body: 'window.bootPrefs = ' + JSON.stringify({ lang, theme: "light", web: true }) });
+  if (p === "/boot.js") return r.fulfill({ contentType: "text/javascript", body: 'window.bootPrefs = ' + JSON.stringify({ lang, theme: "light", web }) });
+  if (p === "/wails/runtime.js") return r.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
   if (p === "/api/state") return json({ agents: [], profiles: [], settings: { lang, theme: "light" } });
   if (p === "/api/agenthub/favorites") {
    state.reads++; const snap = structuredClone(state.data);
@@ -61,11 +62,11 @@ async function fixture(page, lang = "en") {
  });
  return state;
 }
-async function open(browser, lang = "en") {
+async function open(browser, lang = "en", options = {}) {
  await fs.mkdir(path.resolve(__dirname, "../../../.agenthub-work"), { recursive: true });
  const page = await browser.newPage({ viewport: { width: 1120, height: 900 } }); page.setDefaultTimeout(7000);
  const errors = []; page.on("pageerror", (e) => errors.push(e.message));
- const state = await fixture(page, lang);
+ const state = await fixture(page, lang, options);
  await page.goto("http://magpie.test/?view=agenthub-favorites");
  assert.equal(await page.locator('[data-view="agenthub-favorites"]').count(), 1, "Favorites entry must be present in magpie's real navigation");
  await page.getByRole("button", { name: languages[lang].add, exact: true }).waitFor();
@@ -131,6 +132,48 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    assert.equal(state.data.prompts.length, 2);
    await page.reload(); await root.getByRole("button", { name: w.repo, exact: true }).waitFor();
    assert.equal(await page.locator('[data-view="agenthub-favorites"]').getAttribute("aria-current"), "page");
+   assert.deepEqual(errors, []); await page.close();
+  }
+ });
+ test(engine + ": favorites keeps its draft and navigation in the desktop sidebar", async (t) => {
+  const browser = await ({ chromium, webkit }[engine]).launch(); t.after(() => browser.close());
+  for (const lang of ["en", "zh"]) {
+   const { page, state, errors, words: w } = await open(browser, lang, { web: false });
+   const root = page.locator("#view-agenthub-favorites");
+   const nav = page.locator('#nav [data-view="agenthub-favorites"]');
+   assert(await page.locator("#side #nav").isVisible(), "Favorites opens in the desktop sidebar");
+   assert.equal(await nav.locator(".nav-ic").count(), 1, "Favorites uses the sidebar's icon layout");
+   assert.equal(await page.locator("#crumb b").textContent(), lang === "zh" ? "收藏" : "Favorites");
+   await root.getByRole("button", { name: w.add, exact: true }).click();
+   await root.locator('[name="title"]').fill("Sidebar draft");
+   await page.locator('#nav [data-view="agents"]').click();
+   await page.getByRole("alertdialog").getByRole("button", { name: w.cancel, exact: true }).click();
+   assert.equal(await nav.getAttribute("aria-current"), "page", "cancelled navigation stays in Favorites");
+   await page.locator("#sideToggle").click();
+   await page.locator(".top #nav").waitFor();
+   assert(await page.locator(".top #nav").isVisible(), "Favorites stays in the collapsed sidebar's header navigation");
+   assert.equal(await root.locator('[name="title"]').inputValue(), "Sidebar draft");
+   await page.setViewportSize({ width: 560, height: 800 });
+   await page.locator(".top #nav").waitFor();
+   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+   assert(await page.locator(".top #nav").isVisible(), "narrow windows keep Favorites in header navigation");
+   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
+   assert.equal(await root.locator('[name="title"]').inputValue(), "Sidebar draft");
+   // Scroll as the reader does; magpie rejects a click's incidental scroll.
+   await root.hover(); await page.mouse.wheel(0, 650);
+   await page.waitForFunction(() => {
+    const save = document.querySelector("#view-agenthub-favorites [data-ah-save]").getBoundingClientRect();
+    const view = document.querySelector("#view-agenthub-favorites").getBoundingClientRect();
+    return save.top >= view.top && save.bottom <= view.bottom;
+   });
+   await root.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
+   assert.equal(state.data.prompts[0].title, "Sidebar draft");
+   await page.setViewportSize({ width: 1120, height: 900 });
+   await page.locator("#sideToggle").click();
+   await page.locator("#side #nav").waitFor();
+   await page.reload(); await root.getByRole("button", { name: w.add, exact: true }).waitFor();
+   assert(await page.locator("#side #nav").isVisible(), "reloading restores Favorites in the sidebar");
+   assert.equal(await nav.getAttribute("aria-current"), "page");
    assert.deepEqual(errors, []); await page.close();
   }
  });

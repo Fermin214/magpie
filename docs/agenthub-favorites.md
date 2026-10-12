@@ -1,6 +1,6 @@
 # AgentHub favorites in the magpie fork
 
-Favorites adds one top-navigation entry beside Library, with Prompts and
+Favorites adds one navigation entry beside Library, with Prompts and
 Repositories tabs. It saves personal text and links; it never distributes them
 to agents, clones a repository or changes Library content.
 
@@ -19,7 +19,10 @@ to agents, clones a repository or changes Library content.
   Conflicts keep the draft and require explicit reload. A save in flight disables
   further writes and editing. A failed refresh retains the last snapshot but
   disables writes until a successful read.
-- The tray panel and gateway-only view do not add a Favorites entry.
+- The desktop sidebar and header navigation share the Favorites entry, including
+  its icon, translated label, active state and unsaved-draft guard. Resizing or
+  toggling the sidebar keeps the open editor. The tray panel and gateway-only
+  view do not add a Favorites entry.
 
 ## Files and recovery
 
@@ -90,7 +93,7 @@ Only these existing implementation files need feature hooks:
 
 | File | Contract to recheck after merging upstream |
 | --- | --- |
-| assets/index.html | Navigation, hidden view, root-level versioned JS/CSS; script loads before app.js |
+| assets/index.html | Grouped sidebar/header navigation with icon and translated span, hidden view, root-level versioned JS/CSS; script loads before app.js |
 | assets/app.js | View title/list, initial URL, load, leave guard, locale refresh, gateway-only exclusion |
 | assets/i18n.js | Favorites strings in every supported locale |
 | api.go | Route registration inside the management handler |
@@ -117,7 +120,9 @@ The UI test uses real magpie assets, real serialization shapes and fictional API
 data in Chromium and WebKit, Chinese and English. It covers create/save/copy,
 repository editing, import preview and commit, JSON export, narrow layout,
 navigation cancellation, failed saves/refreshes, duplicate submits, revision
-conflicts and old reads completing after navigation. Backend tests cover actual
+conflicts and old reads completing after navigation. It also checks desktop
+sidebar/header switching, narrow windows and reloading with an open Favorites
+page. Backend tests cover actual
 files, backup failure, corruption/new schema, concurrent stores and read-only
 preview. The GUI route test goes through Handler and webGuard.
 

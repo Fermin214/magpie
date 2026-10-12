@@ -74,3 +74,39 @@ distributed release, resolve or independently track the upstream failures and
 finish the complete GUI suite on the final source. Native checks did not cover
 installer lifecycle, macOS/Linux native GUI, or a restart of the entire
 process with production data. No installer or GitHub Release was published.
+
+## Upstream sync - 2026-10-12
+
+Merged upstream `v0.1.1203` (`6c1c0a74`) onto the Favorites fork, bringing
+in 125 upstream commits since `1cb136ec`. Favorites now uses the upstream
+sidebar/header navigation structure: an icon and translated label beside
+Library, with the existing active state, reload and unsaved-draft protection.
+The skill-control alignment and custom-build replacement protection remain.
+
+Passed on the merged source:
+
+- Windows `go vet ./...` and full test compilation (`go test -run '^$' ./...`).
+- Linux `nogui` vet and build; Windows production build.
+- Sandboxed Favorites storage, management-handler and custom-build protection
+  checks, plus the read-only AgentHub exporter.
+- Eighteen focused GUI files covering Favorites, skill controls, sidebar
+  switching/resizing, headers, gateway mode, translation completeness and
+  language switching, Library loading/instruction writes/MCP tools, and click
+  scrolling. They exercise Chromium and WebKit and the five supported locales
+  where their existing fixtures provide them.
+
+The initial GUI run passed 209 of 219 checks. Its ten failures were the new
+sidebar fixture and upstream navigation assertions that did not yet include
+Favorites. After correcting those fixtures and navigation expectations, all
+17 checks in the five affected files passed. The other thirteen files were
+not repeated. The new sidebar check also fails on the prior fork
+assets with `Favorites opens in the desktop sidebar`.
+
+Raw logs are retained in the original checkout's ignored `.agenthub-work/`:
+`sync-ui.log`, `sync-ui-final.log`, `sync-ui-before.log`, `sync-go.log`,
+`sync-vet-windows.log`, `sync-vet-linux.log`, `sync-compile-windows.log`,
+`sync-build-windows.log` and `sync-build-linux.log`.
+
+This is a source/fork sync with a local build. The complete Go and GUI execution
+suites, native WebView2 runtime, real providers and installer lifecycle were
+not rerun. No live gateway/configuration was changed and no release was made.
