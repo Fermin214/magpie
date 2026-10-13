@@ -35,8 +35,7 @@ function serve(lang, textSize, posts) {
   return async (route) => {
     const req = route.request(), url = new URL(req.url());
     const json = (data) => route.fulfill({ json: data });
-    // Native frame appearance is applied at boot; it does not edit config files.
-    if (req.method() === "POST" && url.pathname !== "/api/window/titlebar") posts.push(url.pathname);
+    if (req.method() === "POST") posts.push(url.pathname);
     if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = ${JSON.stringify({ lang, theme: "light", textSize, web: false })};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return json(state);
