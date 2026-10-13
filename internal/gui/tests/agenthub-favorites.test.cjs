@@ -92,13 +92,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(columns[0].y === columns[1].y, width > 500, "two cards share a row when they fit; narrow windows use one column");
     await root.hover(); await page.mouse.wheel(0, 10000);
     await page.waitForFunction(() => {
-     const root = document.querySelector("#view-agenthub-favorites"), rect = root.querySelector(".ah-item:last-child").getBoundingClientRect();
-     return root.scrollTop > 0 && rect.bottom <= root.getBoundingClientRect().bottom;
+     const root = document.querySelector("#view-agenthub-favorites");
+     return root.scrollTop > 0 && root.scrollHeight - root.clientHeight - root.scrollTop <= 1;
     });
     const before = await root.evaluate(el => el.scrollTop);
     await root.locator(".ah-item").last().click();
     await page.waitForFunction(() => !document.querySelector("#modal").hidden);
-    await page.waitForTimeout(600); // wait for the app's existing entrance animation
+    await page.locator("#modal").evaluate(m => Promise.all(m.getAnimations({ subtree: true }).map(a => a.finished)));
     assert.equal(await editor.locator('[name="title"]').inputValue(), state.data.prompts[31].title);
     assert.equal(await editor.locator('[name="body"]').inputValue(), state.data.prompts[31].body);
     const text = await editor.locator('[name="body"]').boundingBox(), save = await editor.locator("[data-ah-save]").boundingBox();
@@ -234,7 +234,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   await root.getByRole("button", { name: "New prompt", exact: true }).click();
   await editor.locator('[name="title"]').fill("Must survive");
   let release; state.holdSave = new Promise((r) => { release = r; });
-  await editor.locator("[data-ah-save]").dblclick({ delay: 5, force: true });
+  await editor.locator("[data-ah-save]").dblclick({ delay: 5 });
   await page.waitForTimeout(100); assert.equal(state.saves, 1, "duplicate requests must not be sent");
   state.failSave = true; release(); state.holdSave = null;
   await editor.getByRole("alert").waitFor();

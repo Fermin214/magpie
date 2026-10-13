@@ -20,7 +20,9 @@ to agents, clones a repository or changes Library content.
   magpie modal; import previews open there too. The fields scroll inside the
   editor while its heading and Save/Cancel buttons remain visible. Opening and
   closing details preserve the list's scroll position and return focus to the
-  selected card. Escape, backdrop clicks and Cancel share `dismiss` and the
+  selected card. Modal updates leave the list DOM in place; list redraws replace
+  only the feature shell and keep the host's scroll spacer. Escape, backdrop
+  clicks and Cancel share `dismiss` and the
   unsaved-draft guard. Failed writes keep the editor open with explicit reload
   recovery inside it.
 - Every mutation returns a complete `Snapshot`; errors never become snapshots.

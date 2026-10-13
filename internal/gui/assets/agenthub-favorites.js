@@ -66,7 +66,9 @@
     generation++; loading = null;
     draft = structuredClone(item || (tab === "prompts" ? { id: "", title: "", body: "", purpose: "", category: "", tags: [], favorite: false } : { id: "", name: "", url: "", notes: "", tags: [], status: "interested", archived: false }));
     returnSelector = item ? `[data-ah-id="${CSS.escape(item.id)}"]` : "[data-ah-add]";
-    baseline = JSON.stringify(draft); draftRevision = data.revision; failed = ""; render();
+    baseline = JSON.stringify(draft); draftRevision = data.revision; failed = "";
+    for (const row of root.querySelectorAll(".ah-item")) row.classList.toggle("on", row.dataset.ahId === draft.id);
+    renderModal();
   }
   function menu(label, options, value, change) {
     const b = button(label, () => openProtoMenu(b, options, value, change, label, "", "left"));
@@ -218,9 +220,11 @@
   }
   function render() {
     if (!root) return;
+    if (editor && (draft || pendingImport)) { renderModal(); return; }
     const scroll = root.scrollTop;
-    root.replaceChildren();
     const shell = node("div", "ah-shell");
+    const previous = root.querySelector(".ah-shell");
+    if (previous) previous.replaceWith(shell); else root.prepend(shell);
     const bar = node("div", "ah-toolbar");
     const tabs = node("div", "ah-tabs"); tabs.setAttribute("role", "tablist");
     for (const [key, label] of [["prompts", "Prompts"], ["repositories", "Repositories"]]) {
@@ -239,7 +243,7 @@
     add.dataset.ahAdd = ""; add.setAttribute("aria-haspopup", "dialog");
     bar.append(refresh, more, add); shell.append(bar);
     if (!draft && !pendingImport) renderError(shell);
-    if (!data) { shell.append(node("p", "ah-empty-list", t(loading ? "Loading…" : "Reload favorites to try again."))); root.append(shell); return; }
+    if (!data) { shell.append(node("p", "ah-empty-list", t(loading ? "Loading…" : "Reload favorites to try again."))); return; }
     const search = node("div", "ah-search");
     const input = node("input", ""); input.type = "search"; input.placeholder = t("Search favorites"); input.setAttribute("aria-label",t("Search favorites")); input.value = query;
     input.oninput = () => { query = input.value; renderList(); };
@@ -252,7 +256,7 @@
     }
     shell.append(search);
     shell.append(node("div", "ah-list"));
-    root.append(shell); renderList(); root.scrollTop = scroll; renderModal();
+    renderList(); root.scrollTop = scroll; renderModal();
   }
   window.agenthubFavorites = {
     enter: load, dirty, dismiss,
