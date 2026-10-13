@@ -204,6 +204,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    assert.equal(await nav.getAttribute("aria-current"), "page", "cancelled navigation stays in Favorites");
    await page.keyboard.press("Control+Shift+S");
    await page.locator(".top #nav").waitFor();
+   await page.waitForFunction(() => !document.documentElement.classList.contains("nav-morph"));
    assert(await page.locator(".top #nav").isVisible(), "Favorites stays in the collapsed sidebar's header navigation");
    assert.equal(await editor.locator('[name="title"]').inputValue(), "Sidebar draft");
    await page.setViewportSize({ width: 560, height: 800 });
@@ -219,6 +220,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    await page.setViewportSize({ width: 1120, height: 900 });
    await page.locator("#sideToggle").click();
    await page.locator("#side #nav").waitFor();
+   await page.waitForFunction(() => !document.documentElement.classList.contains("nav-morph"));
    await page.reload(); await root.getByRole("button", { name: w.add, exact: true }).waitFor();
    assert(await page.locator("#side #nav").isVisible(), "reloading restores Favorites in the sidebar");
    assert.equal(await nav.getAttribute("aria-current"), "page");

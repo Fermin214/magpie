@@ -198,6 +198,9 @@ type agentJSON struct {
 	// Menu: its own model menu is the models picked here, no one model to
 	// start on (agent.ListsModels): ZCode's, Cursor Private Inference's
 	Menu bool `json:"menu,omitempty"`
+	// NoNames: its own list doesn't name magpie's models as Names in agents'
+	// lists says (agent.NoNames), for that setting to say so
+	NoNames bool `json:"noNames,omitempty"`
 	// Source: what an agent not connected runs on now (agent.Source), and
 	// Stale: copies of a connected one still running on the list they
 	// started with (agent.Stale), for the line under its name
@@ -235,6 +238,10 @@ type profileJSON struct {
 	// Agents is what it holds, by agent, to be read before it is applied
 	// (#467); a value that reads as a key or a token is left out
 	Agents []profile.Group `json:"agents"`
+	// InUse: the setup is this profile now, applying it would change
+	// nothing (profile.InUse); the page marks it so (superhtoooth on X:
+	// nothing said which profile was in use)
+	InUse bool `json:"inUse,omitempty"`
 }
 
 type profileLibraryJSON struct {
@@ -272,6 +279,10 @@ type stateJSON struct {
 	// Last: this is the state kept from the last read (laststate.go), for
 	// the page to draw while the fresh one is read
 	Last bool `json:"last,omitempty"`
+	// Served is how many models magpie serves, groups left out: the Get
+	// started card's first step ("add a model source") is done once
+	// there is one, agents found or not
+	Served int `json:"served"`
 }
 
 // unlistedJSON is a model of a provider kept for routing groups, and the
@@ -338,6 +349,12 @@ type settingsJSON struct {
 	PublicURL string `json:"publicURL,omitempty"`
 	// MAGPIE_ADDR, when it sets the gateway's address over Settings' port
 	AddrEnv string `json:"addrEnv,omitempty"`
+	// MAGPIE_ALLOW_IPS, when it sets the allow list over Settings', and
+	// the list it sets; OnNetwork: MAGPIE_ADDR listens on the network, so
+	// the list is shown even while sharing is off
+	AllowIPsEnv     string   `json:"allowIPsEnv,omitempty"`
+	AllowIPsFromEnv []string `json:"allowIPsFromEnv,omitempty"`
+	OnNetwork       bool     `json:"onNetwork,omitempty"`
 	// Dir is the data folder beside a portable magpie (#508)
 	Portable bool `json:"portable,omitempty"`
 	// WSL is whether there is WSL to look in for agents (Windows), for
@@ -346,6 +363,10 @@ type settingsJSON struct {
 	// Rekeyed is what an agent beyond loopback, given the sharing key,
 	// couldn't be set again with when sharing changed (agent.Rekey)
 	Rekeyed string `json:"rekeyed,omitempty"`
+	// Notice is a Settings row's warning when a setting can't take effect:
+	// the Codex subagents row when Codex's own multi_agent_v2 is on in the
+	// config magpie routes (#141)
+	Notice string `json:"notice,omitempty"`
 	// Mac apps that explicitly handle .command files, for resumed sessions.
 	TerminalApps    []terminalChoice `json:"terminalApps,omitempty"`
 	TerminalDefault string           `json:"terminalDefault,omitempty"`
@@ -373,12 +394,18 @@ type settingsJSON struct {
 	VisionMissing string `json:"visionMissing,omitempty"`
 	// the models Codex's thread titles may be sent to (CodexTitles, #705)
 	TitleModels []modelRef `json:"titleModels"`
+	// what each of the disabled models (#1867) turns off now, by pattern
+	DisabledHits map[string][]string `json:"disabledHits,omitempty"`
 	// the model magpie's generate_image tool draws with when ImageGen
 	// names none, and those that can be named
 	ImageGenAuto string `json:"imageGenAuto,omitempty"`
 	// the ImageGen the user picked when magpie can't find it any more
-	ImageGenMissing string     `json:"imageGenMissing,omitempty"`
-	ImageGenModels  []modelRef `json:"imageGenModels"`
+	ImageGenMissing string `json:"imageGenMissing,omitempty"`
+	// the listed model the ImageGen the user picked stands for, when it
+	// isn't listed itself: a ChatGPT account's gpt-image-2.5, saved when
+	// magpie listed it, is its one GPT Image (gateway.ListedDrawer, #1865)
+	ImageGenShown  string     `json:"imageGenShown,omitempty"`
+	ImageGenModels []modelRef `json:"imageGenModels"`
 	// the web search APIs a model's search goes to when no provider can
 	// search (#419), their keys masked; the ones that can be added; and
 	// the provider that searches first, if one does
@@ -392,6 +419,10 @@ type settingsJSON struct {
 	SearchAuto    string             `json:"searchAuto,omitempty"`
 	SearchUnused  string             `json:"searchUnused,omitempty"`
 	SearchRelays  []string           `json:"searchRelays,omitempty"`
+	// the last search the one it names didn't make, since it last
+	// searched: no other provider searched in its place (Gearclickist on
+	// Discord)
+	SearchFailed *searchFailedJSON `json:"searchFailed,omitempty"`
 	// the providers on that aren't offered, as they can't search the web
 	// by themselves (#825)
 	SearchLeftOut []string `json:"searchLeftOut,omitempty"`
@@ -424,6 +455,9 @@ type settingsJSON struct {
 	// and a Qoder or Qoder CN account (its plugin's), and theirs
 	Qoder         bool                        `json:"qoder"`
 	QoderCheckins []provider.WorkBuddyCheckin `json:"qoderCheckins,omitempty"`
+	// every account each vendor's daily check-in reaches, and whether the
+	// user left it out (#1902)
+	CheckinAccounts []provider.CheckinAccount `json:"checkinAccounts,omitempty"`
 	// and the plugins' providers that check in themselves (auth.checkin),
 	// each with its switch and its accounts' last check-ins
 	CheckinPlugins []provider.PluginCheckin `json:"checkinPlugins,omitempty"`
@@ -488,6 +522,9 @@ func searchState(s *settingsJSON) {
 	}
 	s.SearchProvider = gateway.Searcher()
 	s.SearchAuto, s.SearchUnused = gateway.AutoSearcher(), gateway.SearcherUnused()
+	if f, ok := gateway.SearcherFailed(); ok {
+		s.SearchFailed = &searchFailedJSON{Searcher: f.Searcher, Why: f.Why, NothingFound: f.NothingFound, NotSearched: f.NotSearched, At: f.At}
+	}
 	s.SearchChoices = []searchChoiceJSON{}
 	for _, c := range gateway.Searchers() {
 		p := c.Provider
@@ -508,9 +545,22 @@ func searchState(s *settingsJSON) {
 	}
 }
 
+// searchFailedJSON is gateway.SearchFailure as Settings shows it.
+type searchFailedJSON struct {
+	Searcher     string    `json:"searcher"`
+	Why          string    `json:"why,omitempty"`
+	NothingFound bool      `json:"nothingFound,omitempty"`
+	NotSearched  bool      `json:"notSearched,omitempty"`
+	At           time.Time `json:"at"`
+}
+
 func settingsState() settingsJSON {
 	s := settingsJSON{Settings: settings.Load(), Version: Version, Dir: tilde(settings.Dir()), Portable: settings.Portable() != "", Gateway: gateway.URL()}
 	s.AddrEnv = os.Getenv("MAGPIE_ADDR")
+	s.OnNetwork = gateway.OnNetwork()
+	if list, env := gateway.AllowIPs(); env {
+		s.AllowIPsEnv, s.AllowIPsFromEnv = os.Getenv(gateway.AllowIPsEnv), list
+	}
 	if s.LAN || gateway.OnNetwork() {
 		s.PublicURL = gateway.PublicURL()
 	}
@@ -552,6 +602,7 @@ func settingsState() settingsJSON {
 	s.MiniMax, s.MiniMaxCheckins = provider.HasMiniMax(), provider.MiniMaxCheckins()
 	s.Qoder, s.QoderCheckins = provider.HasQoder(), provider.QoderCheckins()
 	s.CheckinPlugins = provider.PluginCheckins()
+	s.CheckinAccounts = provider.CheckinAccounts()
 	s.VisionAuto, s.VisionModels, s.VisionMissing = gateway.AutoVision(), []modelRef{}, gateway.VisionMissing()
 	for _, e := range provider.Served() {
 		if e.Images && (e.ImageInput == nil || *e.ImageInput) && (e.Group != "" || e.Provider.Ready()) {
@@ -563,6 +614,12 @@ func settingsState() settingsJSON {
 		}
 	}
 	s.TitleModels = []modelRef{}
+	for _, pat := range s.DisabledModels {
+		if s.DisabledHits == nil {
+			s.DisabledHits = map[string][]string{}
+		}
+		s.DisabledHits[pat] = provider.DisabledHits(pat)
+	}
 	for _, e := range provider.Served() {
 		if e.Group != "" || e.Provider.Ready() && !e.Provider.DecideOnly() {
 			m := modelRef{ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon}
@@ -583,8 +640,18 @@ func settingsState() settingsJSON {
 			if name == "" {
 				name = m.ID
 			}
-			s.ImageGenModels = append(s.ImageGenModels, modelRef{ID: p.ID + "/" + m.ID, Name: name, Provider: p.ID, PName: p.Name, Icon: p.Icon})
+			s.ImageGenModels = append(s.ImageGenModels, modelRef{ID: p.ID + "/" + m.ID, Name: name, Provider: p.ID, PName: p.Name, Icon: p.Icon, VendorPicks: gateway.VendorPicksDrawer(p)})
 		}
+	}
+	if v := gateway.ListedDrawer(s.ImageGen); v != s.ImageGen {
+		s.ImageGenShown = v
+	}
+	// the Codex subagents row's warning: magpie's multi-agent V1 doesn't reach
+	// Codex where its own multi_agent_v2 is on in the config magpie routes, and
+	// magpie writes nothing there — the setting is the user's to turn off
+	// (#141). Shown on every read, so the row carries it after a reload too.
+	if s.CodexAgentsV1 {
+		s.Notice = agent.CodexSubAgentsV1Warning()
 	}
 	return s
 }
@@ -1033,8 +1100,14 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		// the Settings page sends its own choices; how the agents are
-		// arranged is the Agents page's, and the window's size its own; both stay as they are
-		cur := settings.Load()
+		// arranged is the Agents page's, and the window's size its own; both stay as they are.
+		// Unreadable settings are never carried as the defaults (an empty
+		// allow list, every address let in): Save would refuse them too.
+		cur, err := settings.LoadChecked()
+		if err != nil {
+			fail(rw, err)
+			return
+		}
 		var fields map[string]json.RawMessage
 		_ = json.Unmarshal(body, &fields)
 		// Older pages do not send fonts. An explicit null restores the
@@ -1061,22 +1134,27 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.FastPicks = cur.FastPicks             // switched in the agents' pickers (#954)
 		in.AgentEfforts = cur.AgentEfforts       // picked in an agent's row (#1003)
 		in.PluginCheckins = cur.PluginCheckins   // set on its own (plugin-checkin below)
+		in.CheckinOff = cur.CheckinOff           // set on its own (checkin-account below)
 		settings.CarryPerModel(&in, &cur)
 		in.LAN, in.LANKey = cur.LAN, cur.LANKey
 		in.LANKeyID = cur.LANKeyID
 		in.Port = cur.Port                                 // set on its own (port below), which moves the gateway
 		in.CORSOrigins = cur.CORSOrigins                   // set on its own (cors below)
+		in.AllowIPs = cur.AllowIPs                         // set on its own (allowips below)
 		in.GitHubToken = cur.GitHubToken                   // set on its own (github-token below), never sent to the page
 		in.RequestArchive = cur.RequestArchive             // the Gateway page's, set on its own
 		in.RequestArchiveMaxMB = cur.RequestArchiveMaxMB   // in settings.json only
 		in.GatewayConversations = cur.GatewayConversations // Sessions' explicit recording consent
 		in.RedactRules = cur.RedactRules                   // the masking rules, set on their own
+		in.DisabledModels = cur.DisabledModels             // set on their own (disabled-models below, #1867)
 		// used or left is the Usage page's toggle as much as Settings', set on its own
 		in.QuotaLeft = cur.QuotaLeft
 		in.QuotaReads = cur.QuotaReads // set on its own (quota-reads below)
 		in.UsageOrder = cur.UsageOrder // the Usage page's, dragged there
 		// and what the tray panel's Allowances tab leaves out, set there
 		in.PanelUsageHidden = cur.PanelUsageHidden
+		// and the clients the Usage page's Agents list leaves out, set there
+		in.UsageAgentsHidden = cur.UsageAgentsHidden
 		// how agents' lists name models, set on its own for the agents to be told
 		in.PlainNames, in.PlainOwnNames = cur.PlainNames, cur.PlainOwnNames
 		in.CodexAgentsV1 = cur.CodexAgentsV1
@@ -1084,8 +1162,11 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.CompactAt = cur.CompactAt     // and so is the threshold
 		// Claude Desktop's list, set in its row on the Agents page
 		in.DesktopLongest = cur.DesktopLongest
+		// and the Get started card put away, from the card itself
+		in.GuideHidden = cur.GuideHidden
 
-		in.CodexTitles = cur.CodexTitles // set on its own (codex-titles below)
+		in.CodexTitles = cur.CodexTitles             // set on its own (codex-titles below)
+		in.CodexDescriptions = cur.CodexDescriptions // set on its own (codex-descriptions below)
 		// and so is the model Codex's auto-review runs on (codex-auto-review)
 		in.CodexAutoReview = cur.CodexAutoReview
 		// and the model Codex's subagents are put on, set in Codex's row
@@ -1157,9 +1238,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			onLang()
 		}
 		// an update check that failed, without the proxy set just now, is
-		// tried again through it, not in six hours (#294)
-		if strings.TrimSpace(in.Proxy) != strings.TrimSpace(cur.Proxy) && updates.json().State == "error" {
-			go updates.check()
+		// tried again through it, not in six hours (#294), and marked so
+		// before this answers: the page stops asking on the old error
+		if strings.TrimSpace(in.Proxy) != strings.TrimSpace(cur.Proxy) && updates.json().State == "error" && updates.begin() {
+			go updates.run()
 		}
 		writeJSON(rw, settingsState())
 	})
@@ -1275,6 +1357,21 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
+	// the Agents page's Get started card put away, or back (GuideHidden)
+	mux.HandleFunc("POST /api/settings/guide", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Hidden bool }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		s := settings.Load()
+		s.GuideHidden = in.Hidden
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
 	// whether Claude Desktop lists a model of 1M or more once, by its 1M id
 	// (settings.DesktopLongest, #1272): it reads the list as it starts
 	mux.HandleFunc("POST /api/settings/desktop-longest", func(rw http.ResponseWriter, r *http.Request) {
@@ -1321,8 +1418,45 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
+	// where Codex's request for a thread's description goes: "" as Codex
+	// sends it, or a model's id. It is separate from the title setting.
+	mux.HandleFunc("POST /api/settings/codex-descriptions", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Model string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		v := strings.TrimSpace(in.Model)
+		if v != "" {
+			if _, _, ok := provider.Resolve(v); !ok {
+				fail(rw, fmt.Errorf("no model %s to write Codex's descriptions", v))
+				return
+			}
+		}
+		s := settings.Load()
+		s.CodexDescriptions = v
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
 	// where Codex's requests for a thread's title go (#705): "" as Codex
 	// sends them, "off", or a model's id
+	// the models turned off for every request through magpie (#1867), each
+	// an id or a glob, the list sent whole
+	mux.HandleFunc("POST /api/settings/disabled-models", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Models []string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.SetDisabledModels(in.Models); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
 	mux.HandleFunc("POST /api/settings/codex-titles", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct{ Model string }
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -1511,6 +1645,36 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
+	// and one account's daily check-in, whichever vendor's (#1902): off
+	// leaves it out while its vendor's is on
+	mux.HandleFunc("POST /api/settings/checkin-account", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Key string
+			On  bool
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if in.Key == "" {
+			fail(rw, errors.New("no account"))
+			return
+		}
+		s := settings.Load()
+		off := slices.DeleteFunc(slices.Clone(s.CheckinOff), func(k string) bool { return k == in.Key })
+		if !in.On {
+			off = append(off, in.Key)
+		}
+		if len(off) == 0 {
+			off = nil
+		}
+		s.CheckinOff = off
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
 	// how large the window and the panel are drawn: Settings' choice and
 	// Ctrl/Cmd +, − and 0 in either, set on its own so a key pressed while
 	// the Settings page saves something else is never undone by it
@@ -1547,12 +1711,13 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, settingsState())
 	})
 	// the Usage page's order of its cards, which the tray panel's Allowances
-	// tab follows, and what that tab leaves out, in magpie's settings; one
-	// not sent stays as it is
+	// tab follows, what that tab leaves out, and the clients the page's
+	// Agents list leaves out, in magpie's settings; one not sent stays as it is
 	mux.HandleFunc("POST /api/usage/arrange", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Order       *[]string
-			PanelHidden *[]string
+			Order        *[]string
+			PanelHidden  *[]string
+			AgentsHidden *[]string
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
@@ -1564,6 +1729,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		if in.PanelHidden != nil {
 			s.PanelUsageHidden = *in.PanelHidden
+		}
+		if in.AgentsHidden != nil {
+			s.UsageAgentsHidden = *in.AgentsHidden
 		}
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
@@ -1625,6 +1793,42 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		s := settings.Load()
 		s.CORSOrigins = origins
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
+	// the allow list (lc on Discord): the addresses other computers may
+	// reach magpie from, as IPs and CIDR ranges; none lets every address in.
+	// One that would shut out the page saving it (magpie web, opened from
+	// another computer) is refused, and so is any while MAGPIE_ALLOW_IPS
+	// sets the list.
+	mux.HandleFunc("POST /api/settings/allowips", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ IPs []string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if _, env := gateway.AllowIPs(); env {
+			fail(rw, fmt.Errorf("%s sets the allow list; change it there", gateway.AllowIPsEnv))
+			return
+		}
+		list, err := settings.CleanAllowIPs(in.IPs)
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		if addr, out := gateway.KeepsOut(list, r); out {
+			fail(rw, fmt.Errorf("that allow list would shut out %s, the address this page is open from: add it first", addr))
+			return
+		}
+		s, err := settings.LoadChecked()
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		s.AllowIPs = list
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
 			return
@@ -1852,17 +2056,26 @@ func state() stateJSON {
 	}
 	s.Unlisted = unlistedModels()
 	s.CLIBehind = cliBehind()
+	for _, e := range provider.Served() {
+		if e.Group == "" {
+			s.Served++
+		}
+	}
 	for _, a := range agent.Clients() {
 		s.Clients = append(s.Clients, clientJSON{ID: a.ID, Name: a.Name, Icon: a.Icon})
 	}
-	for _, a := range agent.Detected() {
+	detected := agent.Detected()
+	now := make(map[string]map[string]string, len(detected))
+	for _, a := range detected {
 		if a.Follow != nil {
 			_ = a.Follow()
 		}
 		vals := a.Values()
+		now[a.ID] = vals
 		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Path: tilde(a.Path), Fields: agentFields(a, vals)}
 		aj.Models = agentModelCount(a, aj.Fields)
 		aj.Menu = a.ListsModels
+		aj.NoNames = a.NoNames
 		aj.Drift = a.Drift()
 		aj.Wired = a.Wired()
 		if aj.Wired {
@@ -1888,7 +2101,7 @@ func state() stateJSON {
 	}
 	if ps, err := profile.Load(); err == nil {
 		for _, n := range profile.Names(ps) {
-			pj := profileJSON{Name: n, Summary: profile.Summary(ps[n]), Agents: profile.Details(ps[n])}
+			pj := profileJSON{Name: n, Summary: profile.Summary(ps[n]), Agents: profile.Details(ps[n]), InUse: profile.InUse(ps[n], detected, now)}
 			if l := ps[n].Library; l != nil {
 				servers, skills := l.On()
 				pj.Library = &profileLibraryJSON{Servers: servers, Skills: skills, Instructions: l.GivesInstructions()}

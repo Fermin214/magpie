@@ -26,6 +26,9 @@ type Library struct {
 	Skills       []*Skill     `json:"skills"`
 	// Projects are folders whose agents get some of the skills there
 	Projects []*Project `json:"projects,omitempty"`
+	// Hooks are commands the agents ticked for each run at a point of
+	// their turn (hooks.go, #1790)
+	Hooks []*Hook `json:"hooks,omitempty"`
 	// Applied is what magpie wrote into each agent, so that what it takes
 	// away is only ever its own.
 	Applied map[string]*Applied `json:"applied,omitempty"`
@@ -85,9 +88,24 @@ type Applied struct {
 	// rules, OpenCode's tools keys). Neither holds one the user had.
 	ToolsOff  map[string][]string `json:"toolsOff,omitempty"`
 	ToolRules []string            `json:"toolRules,omitempty"`
+	// Hooks are the entries magpie wrote into the agent's hooks, each
+	// exactly as written: one changed since is the user's (hooks.go)
+	Hooks []HookEntry `json:"hooks,omitempty"`
 }
 
-var mu sync.Mutex // one change at a time, from the page or the CLI's process
+var mu lock // one change at a time, from the page or the CLI's process
+
+// lock is a mutex that counts the times it was taken, for Sync to tell
+// whether anything held it between two of its steps.
+type lock struct {
+	sync.Mutex
+	held uint64
+}
+
+func (m *lock) Lock() {
+	m.Mutex.Lock()
+	m.held++
+}
 
 // Dir is where the library's own files are: the instructions and the skills.
 func Dir() string { return filepath.Join(settings.Dir(), "library") }
@@ -116,6 +134,10 @@ func (l *Library) save() error {
 	sort.Slice(l.MCP, func(i, j int) bool { return l.MCP[i].Name < l.MCP[j].Name })
 	sort.Slice(l.Skills, func(i, j int) bool { return l.Skills[i].Name < l.Skills[j].Name })
 	sort.Slice(l.Projects, func(i, j int) bool { return l.Projects[i].Dir < l.Projects[j].Dir })
+	sort.Slice(l.Hooks, func(i, j int) bool { return l.Hooks[i].Name < l.Hooks[j].Name })
+	for _, h := range l.Hooks {
+		h.Agents = orNone(h.Agents)
+	}
 	for _, a := range l.Applied {
 		sort.Strings(a.MCP)
 		sort.Strings(a.Skills)

@@ -91,12 +91,20 @@ type Settings struct {
 	// named caller keys. LANKey is retained for older Magpie versions.
 	LAN    bool   `json:"lan,omitempty"`
 	LANKey string `json:"lanKey,omitempty"`
-	// CORSOrigins are the web pages (scheme://host[:port]) whose scripts
-	// may call the gateway from a browser (#1051): a preflight from one is
+	// CORSOrigins are the web pages (scheme://host[:port]) and browser
+	// extensions (chrome-extension://<id>, moz-extension://<uuid>,
+	// safari-web-extension://<uuid>) whose scripts may call the gateway
+	// from a browser (#1051): a preflight from one is
 	// answered, and its calls carry the CORS headers that let it read the
 	// reply, each with an enabled gateway key. None by default: a page
 	// gets no CORS headers, as before.
 	CORSOrigins []string `json:"corsOrigins,omitempty"`
+	// AllowIPs are the addresses (IPs and CIDR ranges) other computers may
+	// reach the gateway from at all (lc on Discord); any other is refused
+	// 403 even with a gateway key. None: every address, as before. This
+	// computer is always let in. MAGPIE_ALLOW_IPS, where set, is used in
+	// its place (gateway.AllowIPs).
+	AllowIPs []string `json:"allowIPs,omitempty"`
 	// Port is the gateway's port on this computer, 0 for DefaultPort.
 	// MAGPIE_ADDR, where it is set, comes first (GatewayAddr).
 	Port int `json:"port,omitempty"`
@@ -175,6 +183,11 @@ type Settings struct {
 	// on or off, by the plugin's provider id; one not set follows its
 	// vendor's switch above, which the plugin took over, else is off.
 	PluginCheckins map[string]bool `json:"pluginCheckins,omitempty"`
+	// CheckinOff are the accounts left out of their vendor's daily
+	// check-in while it is on (#1902), each by its entry in the vendor's
+	// check-in file: "<site or provider>|<account id>" ("workbuddy|<uid>",
+	// "trae-cn|<uid>", a plugin's "<provider>|<account>").
+	CheckinOff []string `json:"checkinOff,omitempty"`
 	// MemberModel has a reply's model name the routing group's member
 	// that answered, as magpie's provider/model id (workbuddy/glm-5.3-flash),
 	// rather than the vendor's own name for it, for agents that count
@@ -325,8 +338,12 @@ type Settings struct {
 	// account's own, their codex/ ids and the groups one is in — say
 	// multi_agent_version "v1" (#141): their subagents are then handed
 	// their tasks as text, which a magpie-served subagent can read, where
-	// V2's are sealed by OpenAI's server. Codex's features.multi_agent_v2
-	// still wins, and a thread keeps the version it started with.
+	// V2's are sealed by OpenAI's server, and it is V1 that a ChatGPT
+	// lead's subagent on a magpie-served model needs (a V2 task to a
+	// non-ChatGPT model fails). Codex's own features.multi_agent_v2 would
+	// still win: where it is on in the config magpie routes, magpie says so
+	// (internal/agent/codex.go, and the Settings row) and leaves it to the
+	// user to turn off. A thread keeps the version it started with.
 	CodexAgentsV1 bool `json:"codexAgentsV1,omitempty"`
 	// CodexTitles is where the requests Codex makes for a thread's title
 	// (thread_title, thread_title_reconsideration: a hidden turn of their
@@ -334,6 +351,12 @@ type Settings struct {
 	// as Codex sends them, "off" answered by magpie with no title and sent
 	// nowhere, or a model's id (provider/model, group/<id>) that writes it.
 	CodexTitles string `json:"codexTitles,omitempty"`
+	// CodexDescriptions is where the request Codex makes for a thread's
+	// description (thread_description: its own hidden turn, on Codex's own
+	// model through its ChatGPT sign-in) goes: "" as Codex sends it, or a
+	// model's id (provider/model, group/<id>) that writes it. It is not
+	// CodexTitles: a description asks for {"description"} alone.
+	CodexDescriptions string `json:"codexDescriptions,omitempty"`
 	// CodexAutoReview is the model Codex's auto-review (approvals_reviewer
 	// = "auto_review": the guardian that decides an approval in the user's
 	// place) runs on (#938): a model's id (provider/model, group/<id>) put
@@ -364,6 +387,10 @@ type Settings struct {
 	// "[1m]", and adds none to one whose id has it. Off, as before, it shows
 	// both, the plain one compacting at Claude Code's 200K.
 	DesktopLongest bool `json:"desktopLongest,omitempty"`
+	// GuideHidden: the user put away the Agents page's Get started card
+	// (wangye1644294 on X) before finishing it. Kept here, not in the
+	// page's storage, so the panel, the window and a reload agree.
+	GuideHidden bool `json:"guideHidden,omitempty"`
 	// CompactAt is the window told for a longer one when FullContext is
 	// off, in tokens: 0 is WorkingWindow (#876: 272K was the only one).
 	// A provider's or a model's own (ModelCompacts) comes before it.
@@ -399,6 +426,11 @@ type Settings struct {
 	// panel shows, nothing more: routing, caps, the Usage page and the menu
 	// bar's cells still have them. The panel's order is UsageOrder.
 	PanelUsageHidden []string `json:"panelUsageHidden,omitempty"`
+	// UsageAgentsHidden are the clients, by the id the ledger records them
+	// under ("curl", "Go-http-client", an agent's id), that the Usage page's
+	// Agents list leaves out (ikunbots on X). It is that list's only: the
+	// ledger keeps their calls, and the totals and the chart count them.
+	UsageAgentsHidden []string `json:"usageAgentsHidden,omitempty"`
 	// Visible narrows the models an agent is shown, by agent id: the
 	// families (the tag a provider or group is given), provider ids and
 	// group ids its lists hold. An agent it doesn't name is shown them all.
@@ -407,6 +439,11 @@ type Settings struct {
 	// or a group's) taken out of an agent's lists one by one, by agent id,
 	// after Visible: a model not named here, a new one among them, is shown.
 	HiddenModels map[string][]string `json:"hiddenModels,omitempty"`
+	// DisabledModels are models turned off for every request through magpie
+	// (#1867), each an exact id or a glob ("*fable*"), matched ignoring case
+	// against "<provider>/<model>" and the bare model id: they are left out
+	// of every list, and the gateway refuses them on every route.
+	DisabledModels []string `json:"disabledModels,omitempty"`
 	// PickedModels, for an agent it names, are the only catalog entries its
 	// lists show, after Visible (#1337): the user switched the agent to
 	// "only models I pick", so a model that comes later, of a new provider
@@ -853,23 +890,50 @@ func Load() Settings {
 	return load()
 }
 
+// LoadChecked is Load, and an error when what the file holds is unknown:
+// it is there but can't be read, or it doesn't parse and has no last good
+// generation to read instead. The Settings returned then are Load's (the
+// defaults), which a caller guarding something with a setting (the
+// gateway's allow list) must not take for the user's own: a failed read
+// is unknown, never empty. No file, or an empty one, is no settings and
+// not an error — the cases Save writes over, where it refuses the others.
+func LoadChecked() (Settings, error) {
+	fileMu.RLock()
+	defer fileMu.RUnlock()
+	return loadChecked()
+}
+
 // load is called with fileMu held for reading or writing.
 func load() Settings {
+	s, _ := loadChecked()
+	return s
+}
+
+// loadChecked is LoadChecked, called with fileMu held.
+func loadChecked() (Settings, error) {
 	var s Settings
 	// read again only once the file changed: a look at the agents asks for
 	// the settings for every model of every agent (hundreds of reads, a
 	// fifth of the Agents page's wait)
-	if b, err := filememo.Read("settings", Path(), func(b []byte) ([]byte, error) { return b, nil }); err == nil {
-		// parsed once: this runs for every model of every agent
-		if err := json.Unmarshal(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), &s); err != nil {
-			// one left all zero by a crash (#1505) is its last good generation
-			if bak, err := lastgood.Fallback(Path(), b, validSettings); err == nil {
-				s = Settings{}
-				_ = json.Unmarshal(bytes.TrimPrefix(bak, []byte("\xef\xbb\xbf")), &s)
-			}
+	b, err := filememo.Read("settings", Path(), func(b []byte) ([]byte, error) { return b, nil })
+	if err != nil {
+		if os.IsNotExist(err) {
+			return s.normal(), nil
+		}
+		return s.normal(), fmt.Errorf("could not read settings at %s: %w", Path(), err)
+	}
+	// parsed once: this runs for every model of every agent
+	if perr := json.Unmarshal(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), &s); perr != nil {
+		// one left all zero by a crash (#1505) is its last good generation
+		bak, ferr := lastgood.Fallback(Path(), b, validSettings)
+		if ferr == nil {
+			s = Settings{}
+			_ = json.Unmarshal(bytes.TrimPrefix(bak, []byte("\xef\xbb\xbf")), &s)
+		} else if len(bytes.TrimSpace(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")))) != 0 {
+			err = fmt.Errorf("could not read settings at %s: %w", Path(), perr)
 		}
 	}
-	return s.normal()
+	return s.normal(), err
 }
 
 // validSettings is settings.json's contents read as Settings.
@@ -893,7 +957,7 @@ func CheckProxy(p string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || !slices.Contains([]string{"http", "https", "socks5", "socks5h"}, u.Scheme) {
-		return fmt.Errorf("proxy must look like http://127.0.0.1:7890 or socks5://127.0.0.1:1080, not %q", p)
+		return fmt.Errorf("proxy must look like http://127.0.0.1:7890 or socks5://127.0.0.1:1080")
 	}
 	return nil
 }
@@ -1038,6 +1102,10 @@ func save(s Settings, recording bool) error {
 	if s.CodexTitles != "" && s.CodexTitles != "off" && !strings.Contains(s.CodexTitles, "/") {
 		return fmt.Errorf("the model for Codex's titles must be a model's id such as openai/gpt-5-mini, or off, not %q", s.CodexTitles)
 	}
+	s.CodexDescriptions = strings.TrimSpace(s.CodexDescriptions)
+	if s.CodexDescriptions != "" && !strings.Contains(s.CodexDescriptions, "/") {
+		return fmt.Errorf("the model for Codex's descriptions must be a model's id such as openai/gpt-5-mini, not %q", s.CodexDescriptions)
+	}
 	s.CodexAutoReview = strings.TrimSpace(s.CodexAutoReview)
 	if s.CodexAutoReview != "" && !strings.Contains(s.CodexAutoReview, "/") {
 		return fmt.Errorf("the model for Codex's auto-review must be a model's id such as openai/gpt-5-mini, not %q", s.CodexAutoReview)
@@ -1065,6 +1133,7 @@ func save(s Settings, recording bool) error {
 	s.AgentOrder, s.AgentsHidden, s.AgentsShown = ids(s.AgentOrder), ids(s.AgentsHidden), ids(s.AgentsShown)
 	s.UsageOrder = ids(s.UsageOrder)
 	s.PanelUsageHidden = ids(s.PanelUsageHidden)
+	s.UsageAgentsHidden = ids(s.UsageAgentsHidden)
 	s.TrayUsages = ids(s.TrayUsages)
 	for i, u := range s.CodexAutoReset {
 		s.CodexAutoReset[i] = strings.ToLower(u)

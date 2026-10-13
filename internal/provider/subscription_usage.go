@@ -112,6 +112,10 @@ type SubscriptionQuota struct {
 	Until *time.Time `json:"until,omitempty"`
 	Renew string     `json:"renew,omitempty"`
 	Error string     `json:"error,omitempty"`
+	// NeedsAccessKey is a plan read with the account's access key, which
+	// its provider hasn't (accessKeyCard, #1821): the Usage page offers
+	// the provider's settings to give it in.
+	NeedsAccessKey bool `json:"needsAccessKey,omitempty"`
 	// AsOf is when an allowance shown in place of one that couldn't be
 	// read was read (see keepLast); nil for a reading just made.
 	AsOf *time.Time `json:"asOf,omitempty"`
@@ -137,6 +141,9 @@ type SubscriptionQuota struct {
 	Checkins  bool              `json:"checkins,omitempty"`
 	CheckinBy string            `json:"checkinBy,omitempty"`
 	Checkin   *WorkBuddyCheckin `json:"checkin,omitempty"`
+	// CheckinOff is set on such an account the user left out of its
+	// vendor's check-in (settings.CheckinOff, #1902): it isn't checked in.
+	CheckinOff bool `json:"checkinOff,omitempty"`
 	// Kind is the card's kind as another magpie is told it (CachedCards):
 	// subscription, plan or balance; "" here.
 	Kind string `json:"kind,omitempty"`
@@ -222,15 +229,15 @@ func SubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 			bg = Asked(bg)
 		}
 		readCtx, seq := quotaReading(bg)
+		asked := claudeAskGeneration.Load()
 		go func() {
-			start := time.Now()
 			out := fetchSubscriptionUsage(readCtx)
 			noteDailyCredits(out, time.Now())
 			noteQuotaHistory(out, time.Now())
 			c.Lock()
 			c.data = cacheCards(c.data, out, seq, false)
 			c.at, c.pending = time.Now(), nil
-			if claudeAsked.Load() > start.UnixNano() {
+			if claudeAskGeneration.Load() != asked {
 				c.at = time.Time{} // asked meanwhile: read again
 			}
 			c.Unlock()
@@ -616,6 +623,7 @@ type claudeUsageEntry struct {
 	ws    []QuotaWindow
 	heard time.Time     // when Claude Code last told it, answering
 	tried time.Time     // when /usage was last run, answered or not
+	asked uint64        // the ask generation that run answered
 	wait  time.Duration // how long after tried it runs again unasked
 	err   error         // what the last run said, when it failed
 	whole bool          // /usage was read: ws has every window the account has
@@ -677,12 +685,28 @@ var claudeUsedSince = func(t time.Time) bool {
 // nanoseconds; zero: never).
 var claudeAsked atomic.Int64
 
+// claudeAskGeneration orders asks against readings, even when both happen
+// in one wall-clock tick. tried and wait still schedule the next /usage.
+var claudeAskGeneration atomic.Uint64
+
+func markClaudeUsageAsked() {
+	// Serialize the ask with both caches' snapshots and publications:
+	// neither may observe the old generation, then publish after this ask.
+	// When both locks are needed, the subscription cache comes first.
+	subscriptionUsageCache.Lock()
+	loginUsageCache.Lock()
+	claudeAsked.Store(time.Now().UnixNano())
+	claudeAskGeneration.Add(1)
+	loginUsageCache.Unlock()
+	subscriptionUsageCache.Unlock()
+}
+
 // AskClaudeUsage is the user asking to see Claude's usage — opening the
 // Usage page, refreshing it, `magpie quota` — so Claude Code's /usage is
 // run at once rather than when the next unasked reading is due
 // (claudeUsageWait); the next SubscriptionUsage waits for it.
 func AskClaudeUsage() {
-	claudeAsked.Store(time.Now().UnixNano())
+	markClaudeUsageAsked()
 	AskUsage()
 	l := &loginUsageCache
 	l.Lock()
@@ -727,11 +751,11 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 	key := strings.ToLower(user)
 	c := &claudeUsage
 	now := time.Now()
-	asked := claudeAsked.Load()
+	asked := claudeAskGeneration.Load()
 	c.Lock()
 	e, ok := c.m[key]
 	c.Unlock()
-	due := e.tried.IsZero() || asked > e.tried.UnixNano() ||
+	due := e.tried.IsZero() || claudeAsked.Load() != 0 && asked > e.asked ||
 		active && now.Sub(e.tried) >= e.wait && (e.heard.After(e.tried) || claudeUsedSince(e.tried))
 	// nor, with allowances read only when asked, one nobody asked for
 	read := (active || savedRefresh(ctx, user)) && due && now.Sub(e.tried) >= claudeAskFloor && !holding(ctx)
@@ -746,6 +770,7 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 			c.m = map[string]claudeUsageEntry{}
 		}
 		e.tried, e.wait = now, claudeUsageWait()
+		e.asked = asked
 		c.m[key] = e
 	}
 	c.Unlock()
@@ -809,7 +834,7 @@ func claudeWindows(ctx context.Context, user string, active bool) ([]QuotaWindow
 	if c.m == nil {
 		c.m = map[string]claudeUsageEntry{}
 	}
-	c.m[key] = claudeUsageEntry{at: now, ws: ws, heard: e.heard, tried: now, wait: e.wait, whole: true}
+	c.m[key] = claudeUsageEntry{at: now, ws: ws, heard: e.heard, tried: now, asked: asked, wait: e.wait, whole: true}
 	c.Unlock()
 	// as of now, as a kept reading is: /usage gives a reset to the minute
 	// and can lag it, so a window it still counts full may have started

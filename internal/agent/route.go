@@ -71,6 +71,19 @@ func viaMagpie(agent, prefix string) []Option {
 	return append(groups, out...)
 }
 
+// listLabels are the names the agent's own list calls the catalog's models
+// by, by id: provider.Labels, which follows the Provider in model names
+// setting, where an Option's Label is the name alone for magpie's picker.
+func listLabels(agent string) map[string]string {
+	shown, _ := provider.CatalogFor(agent)
+	labels := provider.Labels(shown)
+	out := make(map[string]string, len(shown))
+	for i, e := range shown {
+		out[e.ID] = labels[i]
+	}
+	return out
+}
+
 // viaMagpieFor is viaMagpie without the agent's own account: Codex CLI going
 // through magpie to its own ChatGPT login would only add a hop.
 func viaMagpieFor(agentID, prefix string) []Option {
@@ -118,9 +131,10 @@ func magpieModels(agent string) []catalog.Model {
 	for i, e := range shown {
 		m := catalog.Model{ID: e.ID, Name: labels[i], Provider: firstOf(e.Provider.Catalogs()), Efforts: e.Efforts, Images: e.Images || seen, ImageInput: e.ImageInput, Context: e.Context, Output: e.Output, AgentsV2: e.AgentsV2, Reasoning: e.Reasoning}
 		// where Codex and Claude Code compact it (#876): a threshold the
-		// user set on the model or on its provider, else the one for every
-		// model, which codexcat answers from the settings it is given
-		m.Compact = provider.CompactSetIn(st, e.ID, find)
+		// user set on the model or on its provider, else a window they
+		// typed whole (#1809), else the one for every model, which codexcat
+		// answers from the settings it is given
+		m.Compact = provider.CompactFor(st, e, find)
 		// what a call costs the user (Pi's cost, #781)
 		if pr, ok := provider.EntryPriceIn(st, find, e); ok {
 			m.Price = &pr

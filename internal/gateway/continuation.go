@@ -64,20 +64,7 @@ var errStreamCut = errors.New("stream cut mid-reply")
 // and be whole, so Chat is not one.
 var errEndedShort = errors.New("the reply ended before it was complete")
 
-// upstreamEnds says whether a stream's event ends the reply, by its type
-// as the passthrough's sniffer counts it (sniff.whole): an Anthropic
-// message_stop or error, a Responses response.completed,
-// response.incomplete or response.failed — a response.completed carrying
-// no status field among them, as relays send it. upstreamStop reads the
-// stop a stop_reason or a response status carries; this reads the type.
-func upstreamEnds(data string) bool {
-	var v struct {
-		Type string `json:"type"`
-	}
-	return json.Unmarshal([]byte(data), &v) == nil && lastEvent(v.Type)
-}
-
-// geminiEnds says whether a Gemini chunk ends the reply, as upstreamEnds
+// geminiEnds says whether a Gemini chunk ends the reply, as replyEnds
 // does for events that name their type. Gemini's and Code Assist's chunks
 // name none and there is no [DONE]: the last one is the one whose
 // candidate carries a finishReason (Code Assist's wrap theirs in a
@@ -325,6 +312,7 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 	// try's reasoning was found stuck in a loop before it had, and it is
 	// let go to ask again (loopReasks)
 	var spoke, relooped bool
+	var summaryUpstream bool
 	reasks := 0
 	if h, ok := w.(*holdWriter); ok {
 		h.onLoop(func(t loopTrip) bool {
@@ -346,6 +334,15 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 		}
 		spoke = spoke || saysSomething(ev)
 		switch ev.Kind {
+		case KThink, KSealed:
+			if ev.Kind == KThink && !summaryUpstream {
+				break
+			}
+			if h, ok := w.(*holdWriter); ok {
+				h.mu.Lock()
+				h.first.hidden = true
+				h.mu.Unlock()
+			}
 		case KError:
 			if ev.Code == "" && cont.possible() && !inGroupTry(r.Context()) {
 				// held while the reply may yet go on; sent when it can't
@@ -408,6 +405,7 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 		}
 		if err == nil {
 			u.RequestID = requestID(res.Header)
+			summaryUpstream = actual == provider.Responses || actual == provider.Gemini || actual == provider.CodeAssist
 			empty = emptyFails(actual)
 		}
 		if err == nil && res.StatusCode >= 400 {
@@ -464,10 +462,8 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 				ended := false // the upstream said its reply ended
 				serr = readSSEAlive(rd, func(_, data string) error {
 					st := upstreamStop([]byte(data))
-					u.add(Usage{Upstream: upstreamOf([]byte(data)), Stop: st})
-					ended = ended || st != "" ||
-						(actual == provider.Anthropic || actual == provider.Responses) && upstreamEnds(data) ||
-						geminiKin(actual) && geminiEnds([]byte(data))
+					u.add(Usage{Upstream: upstreamOf([]byte(data)), Stop: st, Tier: upstreamTier([]byte(data))})
+					ended = ended || replyEnds(actual, data, st)
 					if err := dec(data, attemptSee); err != nil {
 						return err
 					}
