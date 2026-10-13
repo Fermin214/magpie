@@ -93,11 +93,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const still = async (what, act, why) => {
         await reach(page, what);
         const row = what.locator("xpath=ancestor::*[contains(@class,'fbrow') or contains(@class,'segs')][1]");
-        const top = async () => Math.round((await row.boundingBox()).y);
+        const top = async () => (await row.boundingBox()).y;
         const before = await top();
         await act();
         await page.waitForTimeout(200);
-        assert.equal(await top(), before, why);
+        // scrollTop is integral while WebKit lays out fractional row positions.
+        assert(Math.abs(await top() - before) < 1, why);
       };
       await still(byWeight, () => byWeight.click(), "picking By weight moved nothing");
       assert.equal(await byWeight.getAttribute("aria-pressed"), "true");

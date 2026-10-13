@@ -30,7 +30,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await page.locator("#gatewayKeysBlock").isVisible(), false, "most users never share");
       assert.equal(await page.locator("#connectKey").count(), 0, "local-only users see no gateway key picker");
       assert.equal(await page.locator("#connect").getByText(locale === "zh" ? "API 密钥" : "API key", { exact: true }).count(), 1);
-      await expectSecret('OPENAI_API_KEY=magpie');
+      const win = await page.evaluate(() => /Win/i.test(navigator.platform));
+      await expectSecret(win ? '$env:OPENAI_API_KEY="magpie"' : 'OPENAI_API_KEY=magpie');
       if (process.env.ARTIFACT_DIR) {
         await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
         await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-${locale}-local-connect.png`) });
@@ -109,7 +110,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator("#connect").getByRole("button", { name: api, exact: true }).click();
         const base = "http://10.0.0.10:3999" + (["OpenAI", "Responses"].includes(api) ? "/v1" : "");
         assert.equal(await page.locator("#connectAddress code").textContent(), base);
-        for (const dialect of ["Shell", "curl", "Python", "Node"]) {
+        for (const dialect of [win ? "PowerShell" : "Shell", "curl", "Python", "Node"]) {
           await page.locator("#connect").getByRole("button", { name: dialect, exact: true }).click();
           const code = await snippet.textContent();
           assert(code.includes(base), `${api} ${dialect} must use the selected address`);
