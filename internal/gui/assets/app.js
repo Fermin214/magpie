@@ -7439,6 +7439,7 @@ function confirmDiscard() {
   return confirmAction(t("Discard"), t("Discard unsaved changes? Your changes will be lost."), t("Discard"));
 }
 async function cancelEdit(keep) {
+  if (view === "agenthub-favorites") return window.agenthubFavorites.dismiss();
   if ((providerDirty() || ((importing || importingApps) && modalFormDirty())) && !(await confirmDiscard())) return false;
   if (keep !== true) dropSigningIn(editing);
   editing = null; draft = null; importing = null; importingApps = null; renderProviders();

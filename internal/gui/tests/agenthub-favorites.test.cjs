@@ -73,37 +73,90 @@ async function open(browser, lang = "en", options = {}) {
  return { page, state, errors, words: languages[lang] };
 }
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+ test(engine + ": bottom cards open visible details without moving the list", async (t) => {
+  const browser = await ({ chromium, webkit }[engine]).launch(); t.after(() => browser.close());
+  for (const lang of ["en", "zh"]) {
+   const { page, state, errors, words: w } = await open(browser, lang, { web: false });
+   const root = page.locator("#view-agenthub-favorites"), editor = page.locator("#modal .ah-editor");
+   state.data.prompts = Array.from({ length: 32 }, (_, i) => ({
+    id: "card-" + i, title: (lang === "zh" ? "事实核查 " : "Fact check ") + i,
+    body: "Check the evidence and sources.\n".repeat(60), purpose: "核查观点、结论和数据的事实基础与推理链。",
+    category: "研究", tags: ["事实核查"], favorite: false,
+    createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z",
+   }));
+   await root.getByRole("button", { name: w.reload, exact: true }).click();
+   await page.waitForFunction(() => document.querySelectorAll(".ah-item").length === 32);
+   for (const width of [720, 560, 390]) {
+    await page.setViewportSize({ width, height: 716 });
+    const columns = await root.locator(".ah-item").evaluateAll(items => items.slice(0, 2).map(el => ({ x: el.offsetLeft, y: el.offsetTop })));
+    assert.equal(columns[0].y === columns[1].y, width > 500, "two cards share a row when they fit; narrow windows use one column");
+    await root.hover(); await page.mouse.wheel(0, 10000);
+    await page.waitForFunction(() => {
+     const root = document.querySelector("#view-agenthub-favorites"), rect = root.querySelector(".ah-item:last-child").getBoundingClientRect();
+     return root.scrollTop > 0 && rect.bottom <= root.getBoundingClientRect().bottom;
+    });
+    const before = await root.evaluate(el => el.scrollTop);
+    await root.locator(".ah-item").last().click();
+    await page.waitForFunction(() => !document.querySelector("#modal").hidden);
+    await page.waitForTimeout(600); // wait for the app's existing entrance animation
+    assert.equal(await editor.locator('[name="title"]').inputValue(), state.data.prompts[31].title);
+    assert.equal(await editor.locator('[name="body"]').inputValue(), state.data.prompts[31].body);
+    const text = await editor.locator('[name="body"]').boundingBox(), save = await editor.locator("[data-ah-save]").boundingBox();
+    assert(text.y >= 0 && text.y + text.height <= 716, "prompt text is visible immediately, even from the last card");
+    assert(save.y >= 0 && save.y + save.height <= 716, "Save is always in the viewport");
+    assert.equal(await root.evaluate(el => el.scrollTop), before, "opening details keeps the reader's position");
+    if (width === 720) await page.screenshot({ path: path.resolve(__dirname, "../../../.agenthub-work/prompt-dialog-" + engine + "-" + lang + ".png") });
+    await page.setViewportSize({ width, height: 480 });
+    await editor.locator(".ah-field > span").first().hover(); await page.mouse.wheel(0, 2000);
+    await page.waitForFunction(() => document.querySelector(".ah-fields").scrollTop > 0);
+    assert.equal(await root.evaluate(el => el.scrollTop), before, "scrolling details does not scroll the list");
+    const footer = await editor.locator("[data-ah-save]").boundingBox();
+    assert(footer.y >= 0 && footer.y + footer.height <= 480, "Save stays visible in a short window after scrolling fields");
+    await page.setViewportSize({ width, height: 716 });
+    const cancel = editor.getByRole("button", { name: w.cancel, exact: true });
+    await cancel.focus(); await page.keyboard.press("Tab");
+    assert(await editor.locator("button").first().evaluate(el => el === document.activeElement), "Tab stays inside details");
+    await page.keyboard.press("Escape");
+    await page.locator("#modal").waitFor({ state: "hidden" });
+    assert.equal(await root.evaluate(el => el.scrollTop), before, "closing details keeps the reader's position");
+    assert(await root.locator(".ah-item").last().evaluate(el => el === document.activeElement), "focus returns to the selected card");
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
+    if (width === 720) await page.screenshot({ path: path.resolve(__dirname, "../../../.agenthub-work/prompt-cards-" + engine + "-" + lang + ".png") });
+   }
+   assert.deepEqual(errors, []); await page.close();
+  }
+ });
  test(engine + ": favorites entry and complete user flow", async (t) => {
   const browser = await ({ chromium, webkit }[engine]).launch(); t.after(() => browser.close());
   for (const lang of ["en", "zh"]) {
    const { page, state, errors, words: w } = await open(browser, lang);
-   const root = page.locator("#view-agenthub-favorites");
+   const root = page.locator("#view-agenthub-favorites"), editor = page.locator("#modal .ah-editor");
    await page.getByRole("button", { name: w.add, exact: true }).click();
-   await root.locator('[name="title"]').focus();
+   await editor.locator('[name="title"]').focus();
    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
    await page.waitForTimeout(200);
-   assert.equal(await root.locator('[name="title"]').evaluate(el => el === document.activeElement), true, "returning to a clean editor must keep input focus");
-   await root.locator('[name="title"]').fill("Writing review");
-   await root.locator('[name="body"]').fill("  Keep the author’s words.\n");
-   await root.locator('[name="category"]').fill("Writing");
-   await root.locator('[name="tags"]').fill("editing, work");
-   await root.locator("[data-ah-save]").click();
+   assert.equal(await editor.locator('[name="title"]').evaluate(el => el === document.activeElement), true, "returning to a clean editor must keep input focus");
+   await editor.locator('[name="title"]').fill("Writing review");
+   await editor.locator('[name="body"]').fill("  Keep the author’s words.\n");
+   await editor.locator('[name="category"]').fill("Writing");
+   await editor.locator('[name="tags"]').fill("editing, work");
+   await editor.locator("[data-ah-save]").click();
    await root.locator(".ah-item").waitFor(); assert.equal(state.data.prompts.length, 1);
    await root.locator(".ah-item").click();
-   await root.getByRole("button", { name: lang === "zh" ? "复制" : "Copy", exact: true }).click();
+   await editor.getByRole("button", { name: lang === "zh" ? "复制" : "Copy", exact: true }).click();
    assert.deepEqual(state.copies, ["  Keep the author’s words.\n"]);
-   await root.locator('[name="body"]').fill("unsaved");
-   await page.locator('[data-view="agents"]').click();
+   await editor.locator('[name="body"]').fill("unsaved");
+   await page.evaluate(() => { show("agents"); });
    await page.getByRole("alertdialog").getByRole("button", { name: w.cancel, exact: true }).click();
-   assert.equal(await root.locator('[name="body"]').inputValue(), "unsaved");
-   await root.getByRole("button", { name: w.cancel, exact: true }).click();
+   assert.equal(await editor.locator('[name="body"]').inputValue(), "unsaved");
+   await editor.getByRole("button", { name: w.cancel, exact: true }).click();
    await page.getByRole("alertdialog").locator("button").last().click();
    await root.getByRole("tab", { name: w.repos, exact: true }).click();
    await root.getByRole("button", { name: w.repo, exact: true }).click();
-   await root.locator('[name="name"]').fill("Useful project");
-   await root.locator('[name="url"]').fill("https://github.com/example/project");
-   await root.locator('[name="notes"]').fill("Read the source");
-   await root.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
+   await editor.locator('[name="name"]').fill("Useful project");
+   await editor.locator('[name="url"]').fill("https://github.com/example/project");
+   await editor.locator('[name="notes"]').fill("Read the source");
+   await editor.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
    assert.equal(state.data.repositories.length, 1);
    await root.locator(".ah-item").click();
    await page.setViewportSize({ width: 560, height: 800 });
@@ -112,7 +165,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    await page.waitForFunction(() => !document.documentElement.classList.contains("theming"));
    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
    await page.screenshot({ path: path.resolve(__dirname, "../../../.agenthub-work/favorites-" + engine + "-" + lang + ".png") });
-   await root.getByRole("button", { name: w.cancel, exact: true }).click();
+   await editor.getByRole("button", { name: w.cancel, exact: true }).click();
    await page.setViewportSize({ width: 1120, height: 900 });
    await root.getByRole("button", { name: w.more, exact: true }).click();
    const download = page.waitForEvent("download");
@@ -125,9 +178,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    await page.getByRole("menuitemradio", { name: w.import, exact: true }).click();
    const importDoc = doc(); importDoc.prompts.push({ id: "imported", title: "Imported text", body: "safe", purpose: "", category: "", tags: [], favorite: false, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" });
    await (await chooser).setFiles({ name: "favorites.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(importDoc)) });
-   await root.getByRole("button", { name: w.confirm, exact: true }).waitFor();
+   await editor.getByRole("button", { name: w.confirm, exact: true }).waitFor();
    assert.equal(state.data.prompts.length, 1, "preview must not import");
-   await root.getByRole("button", { name: w.confirm, exact: true }).click();
+   await editor.getByRole("button", { name: w.confirm, exact: true }).click();
    await root.getByRole("button", { name: w.repo, exact: true }).waitFor();
    assert.equal(state.data.prompts.length, 2);
    await page.reload(); await root.getByRole("button", { name: w.repo, exact: true }).waitFor();
@@ -139,34 +192,29 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   const browser = await ({ chromium, webkit }[engine]).launch(); t.after(() => browser.close());
   for (const lang of ["en", "zh"]) {
    const { page, state, errors, words: w } = await open(browser, lang, { web: false });
-   const root = page.locator("#view-agenthub-favorites");
+   const root = page.locator("#view-agenthub-favorites"), editor = page.locator("#modal .ah-editor");
    const nav = page.locator('#nav [data-view="agenthub-favorites"]');
    assert(await page.locator("#side #nav").isVisible(), "Favorites opens in the desktop sidebar");
    assert.equal(await nav.locator(".nav-ic").count(), 1, "Favorites uses the sidebar's icon layout");
    assert.equal(await page.locator("#crumb b").textContent(), lang === "zh" ? "收藏" : "Favorites");
    await root.getByRole("button", { name: w.add, exact: true }).click();
-   await root.locator('[name="title"]').fill("Sidebar draft");
-   await page.locator('#nav [data-view="agents"]').click();
+   await editor.locator('[name="title"]').fill("Sidebar draft");
+   await page.evaluate(() => { show("agents"); });
    await page.getByRole("alertdialog").getByRole("button", { name: w.cancel, exact: true }).click();
    assert.equal(await nav.getAttribute("aria-current"), "page", "cancelled navigation stays in Favorites");
-   await page.locator("#sideToggle").click();
+   await page.keyboard.press("Control+Shift+S");
    await page.locator(".top #nav").waitFor();
    assert(await page.locator(".top #nav").isVisible(), "Favorites stays in the collapsed sidebar's header navigation");
-   assert.equal(await root.locator('[name="title"]').inputValue(), "Sidebar draft");
+   assert.equal(await editor.locator('[name="title"]').inputValue(), "Sidebar draft");
    await page.setViewportSize({ width: 560, height: 800 });
    await page.locator(".top #nav").waitFor();
    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
    assert(await page.locator(".top #nav").isVisible(), "narrow windows keep Favorites in header navigation");
    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
-   assert.equal(await root.locator('[name="title"]').inputValue(), "Sidebar draft");
-   // Scroll as the reader does; magpie rejects a click's incidental scroll.
-   await root.hover(); await page.mouse.wheel(0, 650);
-   await page.waitForFunction(() => {
-    const save = document.querySelector("#view-agenthub-favorites [data-ah-save]").getBoundingClientRect();
-    const view = document.querySelector("#view-agenthub-favorites").getBoundingClientRect();
-    return save.top >= view.top && save.bottom <= view.bottom;
-   });
-   await root.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
+   assert.equal(await editor.locator('[name="title"]').inputValue(), "Sidebar draft");
+   const save = await editor.locator("[data-ah-save]").boundingBox();
+   assert(save.y >= 0 && save.y + save.height <= 800, "Save stays visible while the fields scroll");
+   await editor.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
    assert.equal(state.data.prompts[0].title, "Sidebar draft");
    await page.setViewportSize({ width: 1120, height: 900 });
    await page.locator("#sideToggle").click();
@@ -180,25 +228,25 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
  test(engine + ": save failure, stale completion and concurrent changes preserve drafts", async (t) => {
   const browser = await ({ chromium, webkit }[engine]).launch(); t.after(() => browser.close());
   const { page, state, errors } = await open(browser);
-  const root = page.locator("#view-agenthub-favorites");
+  const root = page.locator("#view-agenthub-favorites"), editor = page.locator("#modal .ah-editor");
   await root.getByRole("button", { name: "New prompt", exact: true }).click();
-  await root.locator('[name="title"]').fill("Must survive");
+  await editor.locator('[name="title"]').fill("Must survive");
   let release; state.holdSave = new Promise((r) => { release = r; });
-  await root.locator("[data-ah-save]").dblclick({ delay: 5, force: true });
+  await editor.locator("[data-ah-save]").dblclick({ delay: 5, force: true });
   await page.waitForTimeout(100); assert.equal(state.saves, 1, "duplicate requests must not be sent");
   state.failSave = true; release(); state.holdSave = null;
-  await root.getByRole("alert").waitFor();
-  assert.equal(await root.locator('[name="title"]').inputValue(), "Must survive");
+  await editor.getByRole("alert").waitFor();
+  assert.equal(await editor.locator('[name="title"]').inputValue(), "Must survive");
   state.failSave = false; state.data.revision++; state.data.repositories.push({ id: "other", name: "Other window", url: "https://example.com/repo", notes: "", tags: [], status: "interested", archived: false, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" });
-  await root.locator("[data-ah-save]").click(); await page.waitForTimeout(100);
-  assert.match(await root.getByRole("alert").innerText(), /changed elsewhere/);
-  assert.equal(await root.locator('[name="title"]').inputValue(), "Must survive");
+  await editor.locator("[data-ah-save]").click(); await page.waitForTimeout(100);
+  assert.match(await editor.getByRole("alert").innerText(), /changed elsewhere/);
+  assert.equal(await editor.locator('[name="title"]').inputValue(), "Must survive");
   assert.equal(state.data.repositories.length, 1);
-  await root.getByRole("button", { name: "Reload favorites", exact: true }).click();
+  await editor.getByRole("button", { name: "Reload favorites", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Discard", exact: true }).click();
   await root.getByRole("button", { name: "New prompt", exact: true }).click();
-  await root.locator('[name="title"]').fill("After reload");
-  await root.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
+  await editor.locator('[name="title"]').fill("After reload");
+  await editor.locator("[data-ah-save]").click(); await root.locator(".ah-item").waitFor();
   state.failRead = true;
   await root.getByRole("button", { name: "Reload favorites", exact: true }).click();
   await root.getByRole("alert").waitFor();
@@ -207,13 +255,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   state.failRead = false;
   let releaseRead; state.holdRead = new Promise((r) => { releaseRead = r; });
   await root.getByRole("button", { name: "Reload favorites", exact: true }).click();
-  await page.locator('[data-view="agents"]').click();
+  await page.evaluate(() => { show("agents"); });
   state.holdRead = null;
   await page.locator('[data-view="agenthub-favorites"]').click();
   await root.getByRole("button", { name: "New prompt", exact: true }).click();
-  await root.locator('[name="title"]').fill("New draft after navigation"); releaseRead();
+  await editor.locator('[name="title"]').fill("New draft after navigation"); releaseRead();
   await page.waitForTimeout(100);
-  assert.equal(await root.locator('[name="title"]').inputValue(), "New draft after navigation");
+  assert.equal(await editor.locator('[name="title"]').inputValue(), "New draft after navigation");
   assert.deepEqual(errors, []);
  });
 }

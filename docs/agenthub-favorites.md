@@ -10,10 +10,19 @@ to agents, clones a repository or changes Library content.
 - `internal/gui/agenthub_favorites.go` registers management routes beneath
   `/api/agenthub/favorites`. They share the existing GUI / authenticated web
   handler, not the model gateway or MCP server.
-- `agenthub-favorites.js` owns all page state. The host only calls `enter`,
-  `leave` and `relabel`. Leaving while saving is refused; dirty drafts require
+- `agenthub-favorites.js` owns all page state. The host calls `enter`,
+  `leave`, `relabel` and `dismiss`. Leaving while saving is refused; dirty drafts require
   confirmation. Older reads cannot replace a newer navigation or mutation.
-- `agenthub-favorites.css` is scoped to the page and uses magpie's theme tokens.
+- `agenthub-favorites.css` is scoped to the page and its editor in the shared
+  modal, and uses magpie's theme tokens.
+- Prompts and repositories use a two-column card list, falling back to one
+  column when narrow. Selecting a card or adding an entry opens the shared
+  magpie modal; import previews open there too. The fields scroll inside the
+  editor while its heading and Save/Cancel buttons remain visible. Opening and
+  closing details preserve the list's scroll position and return focus to the
+  selected card. Escape, backdrop clicks and Cancel share `dismiss` and the
+  unsaved-draft guard. Failed writes keep the editor open with explicit reload
+  recovery inside it.
 - Every mutation returns a complete `Snapshot`; errors never become snapshots.
   Writes require an explicit revision and modify only the requested record.
   Conflicts keep the draft and require explicit reload. A save in flight disables
@@ -94,7 +103,7 @@ Only these existing implementation files need feature hooks:
 | File | Contract to recheck after merging upstream |
 | --- | --- |
 | assets/index.html | Grouped sidebar/header navigation with icon and translated span, hidden view, root-level versioned JS/CSS; script loads before app.js |
-| assets/app.js | View title/list, initial URL, load, leave guard, locale refresh, gateway-only exclusion |
+| assets/app.js | View title/list, initial URL, load, leave/dismiss guards, shared modal, locale refresh, gateway-only exclusion |
 | assets/i18n.js | Favorites strings in every supported locale |
 | api.go | Route registration inside the management handler |
 
@@ -122,7 +131,8 @@ repository editing, import preview and commit, JSON export, narrow layout,
 navigation cancellation, failed saves/refreshes, duplicate submits, revision
 conflicts and old reads completing after navigation. It also checks desktop
 sidebar/header switching, narrow windows and reloading with an open Favorites
-page. Backend tests cover actual
+page, selecting bottom cards, modal field scrolling, visible Save/Cancel, focus
+return and preserved list scroll. Backend tests cover actual
 files, backup failure, corruption/new schema, concurrent stores and read-only
 preview. The GUI route test goes through Handler and webGuard.
 

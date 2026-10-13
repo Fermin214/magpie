@@ -4,6 +4,7 @@
   let data = null, draft = null, baseline = "", draftRevision = 0, pendingImport = null;
   let busy = false, loading = null, generation = 0, failed = "", blocked = false;
   let tab = "prompts", query = "", category = "", tag = "", archived = false;
+  let editor = null, returnSelector = "";
   try { if (localStorage.getItem("agenthub.favoritesTab") === "repositories") tab = "repositories"; } catch {}
   const node = (tag, cls, text) => { const n = document.createElement(tag); n.className = cls || ""; if (text !== undefined) n.textContent = text; return n; };
   const dirty = () => !!draft && JSON.stringify(draft) !== baseline;
@@ -64,8 +65,8 @@
     if (!(await abandon()) || !data || blocked) return;
     generation++; loading = null;
     draft = structuredClone(item || (tab === "prompts" ? { id: "", title: "", body: "", purpose: "", category: "", tags: [], favorite: false } : { id: "", name: "", url: "", notes: "", tags: [], status: "interested", archived: false }));
+    returnSelector = item ? `[data-ah-id="${CSS.escape(item.id)}"]` : "[data-ah-add]";
     baseline = JSON.stringify(draft); draftRevision = data.revision; failed = ""; render();
-    root.querySelector(".ah-editor input")?.focus({ preventScroll: true });
   }
   function menu(label, options, value, change) {
     const b = button(label, () => openProtoMenu(b, options, value, change, label, "", "left"));
@@ -74,7 +75,7 @@
   function options(values, all) { return [{ v: "", name: all }, ...values.map((v) => ({ v, name: v, literalName: true }))]; }
   function save() {
     if (!draft || busy || blocked) return;
-    if (!root.querySelector("form")?.reportValidity()) return;
+    if (!editor?.querySelector("form")?.reportValidity()) return;
     mutate("/save", { revision: draftRevision, kind: tab === "prompts" ? "prompt" : "repository", [tab === "prompts" ? "prompt" : "repository"]: draft });
   }
   function exportFile(markdown) {
@@ -111,21 +112,27 @@
     input.oninput = () => { draft[key] = key === "tags" ? input.value.split(/[,，]/).map((v) => v.trim()).filter(Boolean) : input.value; updateSave(); };
     wrap.append(caption, input); form.append(wrap);
   }
-  function updateSave() { const b = root.querySelector("[data-ah-save]"); if (b) b.disabled = busy || blocked || !dirty(); }
+  function updateSave() { const b = editor?.querySelector("[data-ah-save]"); if (b) b.disabled = busy || blocked || !dirty(); }
+  async function dismiss() { if (!(await abandon())) return false; render(); return true; }
+  async function reload() { if (await abandon()) await load(); }
+  function renderError(container, recovery = false) {
+    if (!failed) return;
+    const error = node("div", "ah-error"); error.setAttribute("role", "alert");
+    error.append(node("p", "", t(failed)));
+    if (recovery) error.append(button("Reload favorites", reload));
+    container.append(error);
+  }
   function renderEditor(container) {
     if (pendingImport) {
       const { preview, value } = pendingImport;
-      container.append(node("h2", "", t("Import favorites")));
-      container.append(node("p", "ah-summary", t("{added} new entries; {skipped} existing entries kept.", preview)));
-      for (const name of preview.conflicts) container.append(node("p", "ah-meta", name));
-      const actions = node("div", "ah-actions");
+      container.append(node("h2", "ah-editor-head", t("Import favorites")));
+      const body = node("div", "ah-fields");
+      renderError(body, true);
+      body.append(node("p", "ah-summary", t("{added} new entries; {skipped} existing entries kept.", preview)));
+      for (const name of preview.conflicts) body.append(node("p", "ah-meta", name));
+      const actions = node("div", "ah-actions ah-save");
       actions.append(button("Cancel", () => { pendingImport = null; render(); }), button("Import", () => mutate("/import", { revision: preview.revision, data: value }), "text primary"));
-      container.append(actions); return;
-    }
-    if (!draft) {
-      const empty = node("div", "ah-empty");
-      empty.append(node("h2", "", t("Keep useful things close.")), node("p", "", t("Choose an entry to view or edit it.")));
-      container.append(empty); return;
+      container.append(body, actions); return;
     }
     const form = node("form", "ah-form"); form.onsubmit = (e) => { e.preventDefault(); save(); };
     const heading = node("div", "ah-editor-head");
@@ -142,23 +149,26 @@
       heading.append(link);
     }
     form.append(heading);
+    const body = node("div", "ah-fields");
+    renderError(body, true);
     if (tab === "prompts") {
-      field(form, "title", "Title", false, true); field(form, "body", "Prompt text", true);
-      field(form, "purpose", "Purpose"); field(form, "category", "Category");
+      field(body, "title", "Title", false, true); field(body, "body", "Prompt text", true);
+      field(body, "purpose", "Purpose"); field(body, "category", "Category");
     } else {
-      field(form, "name", "Name", false, true); field(form, "url", "Repository URL", false, true); field(form, "notes", "Notes", true);
+      field(body, "name", "Name", false, true); field(body, "url", "Repository URL", false, true); field(body, "notes", "Notes", true);
       const row = node("div", "ah-actions");
       const statuses = [{ v: "interested", name: "Interested" }, { v: "in_use", name: "In use" }, { v: "uninstalled", name: "Uninstalled" }];
       row.append(menu(statuses.find((s) => s.v === draft.status)?.name || "Interested", statuses, draft.status, (v) => { draft.status = v; render(); }));
-      row.append(button(draft.archived ? "Unarchive" : "Archive", () => { draft.archived = !draft.archived; render(); })); form.append(row);
+      row.append(button(draft.archived ? "Unarchive" : "Archive", () => { draft.archived = !draft.archived; render(); })); body.append(row);
     }
-    field(form, "tags", "Tags (comma separated)");
+    field(body, "tags", "Tags (comma separated)");
     if (tab === "prompts") {
       const label = node("label", "ah-check"), check = node("input", ""); check.type = "checkbox"; check.checked = draft.favorite; check.disabled = busy || blocked;
-      check.onchange = () => { draft.favorite = check.checked; updateSave(); }; label.append(check, node("span", "", t("Pin prompt"))); form.append(label);
+      check.onchange = () => { draft.favorite = check.checked; updateSave(); }; label.append(check, node("span", "", t("Pin prompt"))); body.append(label);
     }
+    form.append(body);
     const actions = node("div", "ah-actions ah-save");
-    const cancel = button("Cancel", async () => { if (await abandon()) render(); });
+    const cancel = button("Cancel", dismiss);
     const submit = button(busy ? "Saving…" : "Save", save, "text primary"); submit.dataset.ahSave = ""; submit.disabled = busy || blocked || !dirty();
     actions.append(cancel, submit);
     if (draft.id) {
@@ -166,6 +176,25 @@
       actions.prepend(button("Delete", async () => { if (!busy && await confirmRemoval(name)) mutate("/delete", { revision, kind, id }); }, "text danger"));
     }
     form.append(actions); container.append(form);
+  }
+  function renderModal() {
+    if (!draft && !pendingImport) {
+      if (editor) {
+        editor = null;
+        const target = returnSelector;
+        closeModal().then(() => {
+          if (!editor && !root.hidden) root.querySelector(target || "[data-ah-add]")?.focus({ preventScroll: true });
+        });
+      }
+      return;
+    }
+    const top = editor?.querySelector(".ah-fields")?.scrollTop || 0;
+    editor = node("section", "ah-editor wide");
+    editor.onkeydown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); }
+    };
+    renderEditor(editor); openModal(editor);
+    editor.querySelector(".ah-fields").scrollTop = top;
   }
   function renderList() {
     const list = root.querySelector(".ah-list"); if (!list) return;
@@ -179,6 +208,7 @@
     }
     for (const item of items) {
       const row = node("button", "ah-item" + (draft?.id === item.id ? " on" : ""));
+      row.dataset.ahId = item.id; row.setAttribute("aria-haspopup", "dialog");
       row.type = "button"; row.disabled = busy || blocked; row.onclick = () => pick(item);
       row.append(node("strong", "", (item.favorite ? "★ " : "") + (item.title || item.name)));
       row.append(node("span", "ah-excerpt", item.purpose || item.notes || item.body || item.url || ""));
@@ -198,7 +228,7 @@
       b.classList.toggle("on", tab === key); b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(tab === key)); tabs.append(b);
     }
     bar.append(tabs, node("span", "grow"));
-    const reload = button("Reload favorites", async () => { if (await abandon()) await load(); }); reload.disabled = busy || !!loading;
+    const refresh = button("Reload favorites", reload); refresh.disabled = busy || !!loading;
     const more = menu("Import / export", [{ v: "import", name: "Import JSON" }, { v: "json", name: "Export JSON" }, { v: "markdown", name: "Export prompts as Markdown" }], "", (v) => {
       if (v === "import") {
         const input = document.createElement("input"); input.type = "file"; input.accept = ".json,application/json"; input.onchange = () => importFile(input.files[0]); input.click();
@@ -206,8 +236,9 @@
     });
     more.disabled = busy || !data || blocked;
     const add = button(tab === "prompts" ? "New prompt" : "New repository", () => pick(null), "text primary"); add.disabled = busy || !data || blocked;
-    bar.append(reload, more, add); shell.append(bar);
-    if (failed) { const error = node("p", "ah-error", t(failed)); error.setAttribute("role", "alert"); shell.append(error); }
+    add.dataset.ahAdd = ""; add.setAttribute("aria-haspopup", "dialog");
+    bar.append(refresh, more, add); shell.append(bar);
+    if (!draft && !pendingImport) renderError(shell);
     if (!data) { shell.append(node("p", "ah-empty-list", t(loading ? "Loading…" : "Reload favorites to try again."))); root.append(shell); return; }
     const search = node("div", "ah-search");
     const input = node("input", ""); input.type = "search"; input.placeholder = t("Search favorites"); input.setAttribute("aria-label",t("Search favorites")); input.value = query;
@@ -220,12 +251,11 @@
       const b = button(archived ? "Archived" : "Active", () => { archived = !archived; render(); }); b.setAttribute("aria-pressed",String(archived)); search.append(b);
     }
     shell.append(search);
-    const grid = node("div", "ah-grid" + (draft || pendingImport ? " ah-has-editor" : ""));
-    grid.append(node("div", "ah-list")); const editor = node("section", "ah-editor"); renderEditor(editor); grid.append(editor); shell.append(grid);
-    root.append(shell); renderList(); root.scrollTop = scroll;
+    shell.append(node("div", "ah-list"));
+    root.append(shell); renderList(); root.scrollTop = scroll; renderModal();
   }
   window.agenthubFavorites = {
-    enter: load, dirty,
+    enter: load, dirty, dismiss,
     leave: async () => { if (!(await abandon())) return false; generation++; loading = null; return true; },
     relabel: render,
   };
