@@ -110,3 +110,27 @@ Raw logs are retained in the original checkout's ignored `.agenthub-work/`:
 This is a source/fork sync with a local build. The complete Go and GUI execution
 suites, native WebView2 runtime, real providers and installer lifecycle were
 not rerun. No live gateway/configuration was changed and no release was made.
+
+## Local Prompt update and upstream sync - 2026-10-13
+
+Merged upstream `v0.1.1223` (`2810a715`) into the Favorites fork. Prompt
+and repository cards use two columns when the window has room. Selecting a
+card opens the shared detail dialog; its fields scroll while the action
+buttons remain visible. Closing it restores the card focus and list position.
+
+The Favorites checks passed in Chromium and WebKit, covering bottom-of-list
+selection, narrow and short windows, saving, errors, keyboard focus, and
+unsaved changes. Related sidebar, Library/export, storage, management-handler
+and custom-build protection checks passed on the merged source. Native Windows
+WebView2 verification also passed for cards, detail scrolling, saving and
+unsaved changes. Evidence is retained under `.agenthub-work/`, including
+`native-prompt-results.json`, `native-prompt-cards.png`,
+`native-prompt-dialog.png`, `prompt-sync-favorites-final.log` and
+`prompt-sync-sidebar-final.log`.
+
+Acceptance is scoped to the local Favorites change and its upstream
+integration. Unrelated upstream source and test changes were reverted.
+The Windows custom-build version continues to prevent replacement by the
+official updater. The local executable and configuration are backed up before
+replacement; deployment receipts record the final executable and Favorites
+hashes. No PR, installer or public release is part of this change.
