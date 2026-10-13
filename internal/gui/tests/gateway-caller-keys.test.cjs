@@ -69,7 +69,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.locator("#ledExport").click();
       await page.waitForTimeout(150);
       assert(events.some((e) => e.action === "export" && e.query.includes("callerKey=laptop") && !e.query.includes("key=") && !e.query.includes("user=")));
-      await page.waitForLoadState("networkidle");
       await page.reload();
       await page.locator("#prefs").click();
       await page.locator(":is(#setTab-network, .nav-s[data-of=setTab-network]):visible").click();

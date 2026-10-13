@@ -28,9 +28,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         };
         const shown = (sel) => page.locator(sel).textContent();
         const open = async () => {
-          // Finish the prior document's routed boot requests before replacing it.
-          // WebKit otherwise reports canceled fixture responses as CORS errors.
-          await page.waitForLoadState("networkidle");
           await page.goto("http://magpie.test/?view=gateway");
           await page.locator("#connect .val code").first().waitFor();
         };
@@ -65,7 +62,6 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator(":is(#setTab-network, .nav-s[data-of=setTab-network]):visible").click();
         await page.locator("#lanList .lan-address-row").waitFor();
         await pick("#lanList .lan-interface", "10.0.0.10");
-        await page.waitForLoadState("networkidle");
         await page.reload();
         await page.locator("#prefs").click();
         await page.locator(":is(#setTab-network, .nav-s[data-of=setTab-network]):visible").click();
