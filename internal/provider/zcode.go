@@ -53,6 +53,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
 )
 
@@ -97,7 +98,8 @@ type zcodeKey struct {
 
 func zcodeCredentialsPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".zcode", "v2", "credentials.json")
+	// under the folder ZCode's data was moved to, when it was
+	return filepath.Join(appdir.ZCodeDataIn(home), ".zcode", "v2", "credentials.json")
 }
 
 // zcodeSecret is the key ZCode encrypts its credentials with.
@@ -750,7 +752,7 @@ func startZCodeSignIn(s *signInFlow, site string) error {
 	s.st.URL = u.String()
 	s.stop = cancel
 	s.mu.Unlock()
-	interval := time.Duration(max(flow.Interval, 1)) * time.Second
+	interval := devicePoll(int(flow.Interval))
 	deadline := time.Unix(int64(flow.Expires), 0)
 	if flow.Expires == 0 {
 		deadline = time.Now().Add(5 * time.Minute)
@@ -824,7 +826,9 @@ func startZCodeSignIn(s *signInFlow, site string) error {
 			}
 			who := zcodeName(zcodeWho(got.User.Email, got.User.Name, got.User.ID), site, k, have)
 			auth, _ := json.Marshal(k)
-			if err := addSideLogin(savedLogin{Agent: "zcode", User: who, Plan: plan, Auth: auth}, ownUser, func(savedLogin) {}); err != nil {
+			if err := keepLogin(ctx, func() error {
+				return addSideLogin(savedLogin{Agent: "zcode", User: who, Plan: plan, Auth: auth}, ownUser, func(savedLogin) {})
+			}); err != nil {
 				fail(err.Error())
 				return
 			}

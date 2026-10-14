@@ -134,3 +134,37 @@ The Windows custom-build version continues to prevent replacement by the
 official updater. The local executable and configuration are backed up before
 replacement; deployment receipts record the final executable and Favorites
 hashes. No PR, installer or public release is part of this change.
+
+## Upstream sync - 2026-10-14
+
+Merged `upstream/main` at `f074996d`, incorporating 171 new upstream commits.
+The shell keeps upstream's plugin kernel, optional-feature switches and
+last-page restoration. Favorites stays independent, including its navigation,
+dirty-draft guards, gateway-mode exclusion and translated labels. The Library
+control alignment follows the moved files under `assets/plugins/library/`.
+Shared Repository translations now use upstream's existing keys.
+
+Necessary validation passed:
+
+- Focused Go checks in `internal/agenthub/favorites`, `internal/gui` and
+  `internal/update`: storage conflicts/corruption/concurrent writes/import
+  preview, the management-handler round trip, embedded/versioned assets,
+  plugin client loading and custom-build updater protection.
+- 88 distinct GUI/static checks across Favorites, sidebar, gateway mode,
+  last-page restoration, plugin kernel/switches, Library control alignment and
+  translations. Browser checks use Chromium and WebKit. The Favorites flow
+  also checks reopening without a view parameter. Failed checks were rerun
+  after adapting the plugin-switch fixture to Favorites, excluding the ignored
+  local tool cache from translation ownership checks and removing duplicate
+  Repository translation keys.
+- JavaScript syntax and Git whitespace/conflict checks.
+
+Logs are retained in `.agenthub-work/sync-20261014-{go-final,ui-final,
+builtins-final,i18n-final}.log`; `verify-sync-20261014.ps1` reproduces the
+focused checks and custom Windows build. Test homes and caches are isolated;
+browser APIs use fictional data. Windows sandbox rename/cache-path failures
+were resolved by normal-user execution with an explicit browser cache path.
+
+Full Go/GUI suites, cross-platform builds, native WebView2, real-provider and
+installer checks were not rerun for this sync. No running application,
+configuration, remote branch or public release was changed.

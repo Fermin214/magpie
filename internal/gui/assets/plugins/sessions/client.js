@@ -7,9 +7,14 @@
 // may still be running, and is left as it is. Each row shows what the
 // session spent, as the Usage page's list does, and that list's rows open
 // here (#752). Everything comes from /api/sessions/manage.
-(() => {
-  const page = $("#view-sessions");
-  if (!page) return;
+//
+// A page the Sessions plugin adds to the window (kernel.js), its words in
+// i18n.js beside this file. Classic script, loaded before app.js: what
+// runs as it loads touches neither the page nor app.js. mount, at
+// magpie.start, is handed the page; open loads it, relang draws it again
+// in a new language, and reveal is the Usage page's way in.
+magpie.plugin("sessions", (ctx) => {
+  let page = null;
 
   let data = null;        // /api/sessions/manage
   let failed = "";
@@ -84,13 +89,12 @@
     }
     if (view === "sessions") draw();
   }
-  window.loadSessionsPage = load;
 
-  // openSessionOnPage: the Sessions page, from the Usage page's list (#752):
+  // reveal: the Sessions page, from the Usage page's list (#752):
   // on the session's agent, its folder unfolded and the session opened to
   // its details, brought into sight once it is drawn; with no id, the page
   // on that agent (or as it was). The reader's click is what moves the view.
-  window.openSessionOnPage = (s, e) => {
+  function reveal(s, e) {
     if (s.agent && s.agent !== agent) {
       agent = s.agent;
       try { localStorage.setItem("magpie.sessionsAgent", agent); } catch {}
@@ -108,7 +112,7 @@
       focus = scrollOnPurpose(e) ? { agent, id: s.id, until: performance.now() + 5000 } : null;
     }
     show("sessions");
-  };
+  }
 
   // bring the session asked for into sight, once its row is drawn
   function toFocus() {
@@ -899,7 +903,7 @@
     h.append(icon("claude"), el("b", "", t("Relocate Claude Code project")));
     ed.append(h, el("p", "sub sm-ask-path", (wsl ? `WSL ${wsl}: ` : "") + from));
     ed.append(el("p", "lib-confirm", t("Close Claude Code and its editor sessions first. This moves the entire project's sessions, not just filtered or selected rows. Existing target storage is never overwritten. Desktop-only sessions are not changed.")));
-    const label = el("label", "", t("New absolute project path"));
+    const label = el("label", "sm-ask-field", t("New absolute project path"));
     const input = el("input", "");
     input.type = "text";
     input.value = from;
@@ -1130,4 +1134,13 @@
     if (items.some((x) => x.gateway)) out.push(el("p", "usage-note sm-gw-trash-note", t("Conversations magpie recorded through the gateway still expire after 7 days here, and Delete saved conversations… erases them too.")));
     return out;
   }
-})();
+
+  ctx.slots.add("page", {
+    key: "sessions",
+    title: "Sessions",
+    mount(main) { page = main; },
+    open: () => load(),
+    relang: () => load(),
+    reveal,
+  });
+});

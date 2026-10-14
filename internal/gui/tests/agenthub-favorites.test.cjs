@@ -224,6 +224,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
    await page.reload(); await root.getByRole("button", { name: w.add, exact: true }).waitFor();
    assert(await page.locator("#side #nav").isVisible(), "reloading restores Favorites in the sidebar");
    assert.equal(await nav.getAttribute("aria-current"), "page");
+   await page.goto("http://magpie.test/");
+   await root.getByRole("button", { name: w.add, exact: true }).waitFor();
+   assert.equal(await nav.getAttribute("aria-current"), "page", "opening without a view restores Favorites as the last page");
    assert.deepEqual(errors, []); await page.close();
   }
  });

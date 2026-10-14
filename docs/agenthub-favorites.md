@@ -34,6 +34,9 @@ to agents, clones a repository or changes Library content.
   its icon, translated label, active state and unsaved-draft guard. Resizing or
   toggling the sidebar keeps the open editor. The tray panel and gateway-only
   view do not add a Favorites entry.
+- Favorites participates in the shell's last-page restoration when no view is
+  requested. Library, Sessions and Gateway use the upstream plugin kernel;
+  Favorites remains an independent view and is not controlled by their switches.
 
 ## Files and recovery
 
@@ -114,6 +117,11 @@ upstream router into a plugin framework. Root-level prefixed assets work with
 `versionedPage` without changing its filename matcher. Data modules must not
 import Library/provider/gateway packages. Keep business changes separate from
 integration and build changes when reviewing the fork.
+
+The fork's Library control alignment follows upstream's files under
+`assets/plugins/library/`: `client.js` and `library.css`. Keep the kernel's
+plugin page lists and hooks when merging the shell, adding Favorites to its
+independent view lists, including `OPEN_VIEWS`.
 
 ## Verification
 

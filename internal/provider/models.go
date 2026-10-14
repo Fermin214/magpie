@@ -360,8 +360,9 @@ var newFetches = struct {
 // restarted by hand).
 var newFetchRetry = time.Minute
 
-// fetchingNew is set while a FetchNewSoon runs; newSoonAt is when the last
-// one started.
+// fetchingNew is set while a FetchNew started in the background
+// (FetchNewSoon, FetchNewBehind) picks the accounts due or runs; newSoonAt
+// is when the last one started.
 var (
 	fetchingNew atomic.Bool
 	newSoonAt   atomic.Int64
@@ -380,6 +381,9 @@ func FetchNewSoon(timeout time.Duration) {
 		return
 	}
 	newSoonAt.Store(now)
+	// the panel reads nothing first, and /api/state?last=1 answers at once
+	// (#1519): even the accounts are listed behind it, told by fetchingNew
+	// until FetchNew counts itself
 	go func() {
 		defer fetchingNew.Store(false)
 		FetchNew(timeout)
@@ -395,18 +399,70 @@ func FetchNewBehind(timeout time.Duration) {
 		return
 	}
 	newSoonAt.Store(time.Now().UnixNano())
-	go func() {
-		defer fetchingNew.Store(false)
-		FetchNew(timeout)
-	}()
+	fetchNewGo(timeout)
 }
 
-// newRunning counts the FetchNew calls under way.
+// fetchNewGo is FetchNew in the background, counted in newRunning before
+// it returns when there is work, so a page reading FetchingNew straight
+// after is told; with none nothing is started or counted. Which accounts
+// are due is known at once unless a CLI is still asked who is signed in:
+// then the fetch is counted and waits for it in its goroutine, as the page
+// doesn't wait on a CLI (#541), and isn't told nothing is coming before
+// that account's list does (#1789). The accounts are listed here only once
+// no CLI is left to wait on.
+func fetchNewGo(timeout time.Duration) {
+	run := func(fetch func()) {
+		newRunning.Add(1)
+		go func() {
+			defer newRunning.Add(-1)
+			defer fetchingNew.Store(false)
+			fetch()
+		}()
+	}
+	if !newFetches.TryLock() {
+		// behind a FetchNew under way, which the page doesn't wait on
+		run(func() { FetchNew(timeout) })
+		return
+	}
+	behind := func() {
+		run(func() {
+			defer newFetches.Unlock()
+			fetchNewHeld(timeout)
+		})
+	}
+	if identitiesUnsettled() {
+		behind()
+		return
+	}
+	// no CLI left to ask, unless one was forgotten while they were listed
+	// (a sign-in just finished): asked behind the page, as left out
+	ps := All()
+	if identitiesUnsettled() {
+		behind()
+		return
+	}
+	due, _ := newDue(ps)
+	if len(due) == 0 {
+		newFetches.Unlock()
+		fetchingNew.Store(false)
+		return
+	}
+	run(func() {
+		defer newFetches.Unlock()
+		fetchDue(due, timeout)
+	})
+}
+
+// newRunning counts the FetchNew calls under way, those started in the
+// background included.
 var newRunning atomic.Int32
 
 // FetchingNew reports whether a FetchNew is under way (start-up's, or one
-// started behind a page): accounts' lists may be on their way still.
-func FetchingNew() bool { return newRunning.Load() > 0 }
+// started behind a page): accounts' lists may be on their way still. One
+// started behind a page counts from its start, while it still picks the
+// accounts due: a page whose FetchNewBehind found it so returned at once,
+// and was told none was on its way until the one picking counted itself.
+func FetchingNew() bool { return newRunning.Load() > 0 || fetchingNew.Load() }
 
 // FetchNew asks each signed-in account whose vendor list magpie hasn't
 // fetched yet for it, each for at most timeout. Start-up does this for the
@@ -422,17 +478,53 @@ func FetchNew(timeout time.Duration) (missing bool) {
 	defer newRunning.Add(-1)
 	newFetches.Lock()
 	defer newFetches.Unlock()
+	return fetchNewHeld(timeout)
+}
+
+// fetchNewHeld is FetchNew with newFetches held.
+func fetchNewHeld(timeout time.Duration) (missing bool) {
 	// listing them asks a CLI who is signed in, if never asked: one that
 	// hasn't answered yet is waited for, and they are listed again
+	answered := identitiesAnswered()
 	ps := All()
+	// one answered since, while they were listed (its look gave up
+	// waiting) or after: an account it says is signed in was left out
 	if waited, unknown := awaitIdentities(timeout); unknown {
 		missing = true
-	} else if waited {
+	} else if waited || answered != identitiesAnswered() {
 		ps = All()
 	}
+	due, skipped := newDue(ps)
+	if fetchDue(due, timeout) {
+		missing = true
+	}
+	// one waiting to be asked again, unless another's fetch listed it
+	for _, f := range skipped {
+		if _, ok := f.p.Listed(); !ok || f.decide {
+			missing = true
+		}
+	}
+	return missing
+}
+
+// newFetch is a provider FetchNew asks for its list, and whether for its
+// decision models.
+type newFetch struct {
+	p      Provider
+	decide bool
+}
+
+// newDue is those of ps FetchNew asks for their lists now, and those
+// skipped as they failed less than newFetchRetry ago; newFetches held.
+func newDue(ps []Provider) (due, skipped []newFetch) {
 	for _, p := range ps {
 		// a list of decision models fetched before magpie kept their
 		// windows and input, or not fetched yet (ARNO on Discord)
+		// one switched off isn't asked (leftAlone): a signed-in
+		// agent's list asks its CLI or the vendor
+		if p.Off {
+			continue
+		}
 		decide := p.decideListDue()
 		if !decide && (p.Account == nil || !p.Ready()) {
 			continue
@@ -442,24 +534,38 @@ func FetchNew(timeout time.Duration) (missing bool) {
 			continue
 		}
 		if t, ok := newFetches.m[p.ID]; ok && time.Since(t) < newFetchRetry {
-			missing = true
+			skipped = append(skipped, newFetch{p, decide})
+			continue
+		}
+		due = append(due, newFetch{p, decide})
+	}
+	return due, skipped
+}
+
+// fetchDue asks each of due for its list, each for at most timeout, and
+// reports whether one failed; newFetches held.
+func fetchDue(due []newFetch, timeout time.Duration) (failed bool) {
+	for _, f := range due {
+		p := f.p
+		// listed since by another's fetch, as a plugin's accounts are
+		if _, ok := p.Listed(); ok && !f.decide {
 			continue
 		}
 		newFetches.m[p.ID] = time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		var err error
-		if decide && p.Account == nil {
+		if f.decide && p.Account == nil {
 			_, err = p.fetchDecide(p.Via(ctx))
 		} else {
 			_, err = p.Fetch(ctx)
 		}
 		if err != nil {
 			log.Println(p.ID + ": " + err.Error())
-			missing = true
+			failed = true
 		}
 		cancel()
 	}
-	return missing
+	return failed
 }
 
 // a fetched list: every endpoint's models merged, the base kept for
@@ -1338,6 +1444,9 @@ func (p Provider) RejectsTemperature(model string) bool {
 // Efforts are the reasoning levels the model takes, when known: its own,
 // or those the user gave it when it has none known.
 func (p Provider) Efforts(model string) []string {
+	if Reasonless(p.ID, model) {
+		return nil
+	}
 	if all := p.Known(model); len(all) > 0 {
 		return all
 	}
@@ -1348,6 +1457,9 @@ func (p Provider) Efforts(model string) []string {
 // it thinks, or models.dev says most of those serving it do (Entry's
 // Reasoning).
 func (p Provider) Thinks(model string) bool {
+	if Reasonless(p.ID, model) {
+		return false
+	}
 	if len(p.Efforts(model)) > 0 {
 		return true
 	}
@@ -1408,6 +1520,9 @@ func (p Provider) knownElsewhere(model string) []string {
 // lists it with a thinking switch alone, or nothing (Xiaomi's
 // mimo-v2.6-flash), and the user gave it none.
 func (p Provider) Levelless(model string) bool {
+	if Reasonless(p.ID, model) {
+		return true
+	}
 	if len(p.Efforts(model)) > 0 {
 		return false
 	}
@@ -1492,8 +1607,12 @@ func (p Provider) ListPrice(model string) (catalog.Price, bool) {
 			names = append(names, id)
 		}
 	}
+	cats := p.Catalogs()
+	if c := p.EndpointCatalog(); c != "" {
+		cats = []string{c}
+	}
 	for _, m := range names {
-		if pr, ok := catalog.PricedBy(priceCatalogs(p.Catalogs()), m); ok {
+		if pr, ok := catalog.PricedBy(priceCatalogs(cats), m); ok {
 			return pr, true
 		}
 		if pr, ok := catalog.PricedBy(makerPriceCatalogs(), m); ok {
@@ -1501,6 +1620,40 @@ func (p Provider) ListPrice(model string) (catalog.Price, bool) {
 		}
 	}
 	return catalog.Price{}, false
+}
+
+// EndpointCatalog is the models.dev catalog a provider the user added by
+// its endpoint alone is priced from: the one models.dev says serves its
+// models at that address, when exactly one does (#2052, mengyianx: a
+// provider at AMD's own https://developer.amd.com.cn/radeon/api/v1 had no
+// price for Qwen3.8-27B, which models.dev's amd lists at $0 there, while
+// its maker sells no such model). Only a key's provider with no catalog
+// named counts: a catalog the user or a preset gave stands, and a
+// subscription's account is priced as its own code says. A plan's catalog
+// is never one: it lists what its membership charges per token, $0, not
+// what the model costs (membershipCatalogs).
+func (p Provider) EndpointCatalog() string {
+	if p.Account != nil || len(p.Catalogs()) > 0 {
+		return ""
+	}
+	var found []string
+	// the Anthropic base is kept as its root (normalize), where models.dev
+	// writes an Anthropic API's with its /v1
+	urls := []string{p.Chat, p.Responses, p.Anthropic, p.Gemini}
+	if p.Anthropic != "" {
+		urls = append(urls, p.Anthropic+"/v1")
+	}
+	for _, u := range urls {
+		for _, id := range catalog.AtEndpoint(u) {
+			if !slices.Contains(found, id) {
+				found = append(found, id)
+			}
+		}
+	}
+	if len(found) != 1 || strings.Contains(found[0], "-plan") || slices.Contains(membershipCatalogs, found[0]) {
+		return ""
+	}
+	return found[0]
 }
 
 // cursorFast is a Cursor id of a Grok model in its fast mode, at an effort
@@ -1844,6 +1997,10 @@ type Entry struct {
 	// thinking switch alone has it and no Efforts (a group's: a member
 	// thinks).
 	Reasoning bool `json:"reasoning,omitempty"`
+	// Reasonless is set on a model the user said takes no reasoning ask
+	// (SetModelReasonless): it is sent none, and as a group's member it
+	// leaves the group the levels the others have
+	Reasonless bool `json:"-"`
 	// AgentsV2 is set on a model offering Codex's Ultra that no ChatGPT
 	// account answers for (a group's: none of its members): Codex is told
 	// multi-agent V2 for it, so Ultra hands work to its agents, whose
@@ -1985,6 +2142,11 @@ func entryFor(p Provider, m catalog.Model, s settings.Settings) Entry {
 	if p.Account == nil || p.Account.Agent != "codex" {
 		e.Efforts = withUltra(m.ID, e.Efforts)
 		e.AgentsV2 = slices.Contains(e.Efforts, "ultra")
+	}
+	// one the user said takes no reasoning ask offers none and is sent
+	// none (SetModelReasonless), whatever its list says
+	if s.ModelReasonless[e.ID] {
+		e.Efforts, e.Reasoning, e.AgentsV2, e.Reasonless = nil, false, false, true
 	}
 	return e
 }

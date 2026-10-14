@@ -611,7 +611,11 @@ func GroupFor(id string) (string, bool) {
 	if id == "" || strings.Contains(id, "/") {
 		return "", false
 	}
-	all := Groups()
+	return groupForIn(Groups(), id)
+}
+
+// groupForIn is GroupFor over the groups all, read once for many ids.
+func groupForIn(all []Group, id string) (string, bool) {
 	k := Slug(sameModel(id))
 	for _, gid := range []string{strings.ToLower(id), k, "auto-" + k} {
 		if g, ok := groupOf(all, gid); ok {
@@ -778,11 +782,11 @@ func groupEntries(entries []Entry) []Entry {
 			var efforts []string
 			images, thinks, ctx, output := false, false, 0, 0
 			var imageInput *bool
-			unknown := false
+			unknown, reasonless := false, false
 			for _, x := range entries {
 				if x.Provider.ID == m.Provider.ID && x.Model == m.Model {
 					efforts, images, thinks, ctx, output, imageInput = x.Efforts, x.Images, x.Reasoning, x.Context, x.Output, x.ImageInput
-					unknown = levelsUnknown(x)
+					unknown, reasonless = levelsUnknown(x), x.Reasonless
 				}
 			}
 			// it reasons when a member does: the gateway sends the
@@ -831,6 +835,12 @@ func groupEntries(entries []Entry) []Entry {
 			// its models (the outermost that does)
 			if i := slices.IndexFunc(m.Via, func(v Group) bool { return len(v.Levels) > 0 }); i >= 0 {
 				efforts = m.Via[i].Levels
+			} else if reasonless {
+				// the user said it takes no reasoning ask: the gateway sends
+				// it none, whatever the agent asks, so it doesn't take the
+				// others' levels away (yuexian7 on Discord: a group of
+				// Opus and a model that answers reasoning_effort with 422)
+				continue
 			} else if m.Effort != "" {
 				if !slices.Contains(fixed, m.Effort) {
 					fixed = append(fixed, m.Effort)
@@ -919,7 +929,7 @@ func levelsUnknown(x Entry) bool {
 // but for one the user fixed at an effort (Group's member syntax, #189):
 // the gateway leaves that alone, the user's word over magpie's.
 func (e Entry) Quiet() bool {
-	return !e.Reasoning && len(e.Efforts) == 0 && !levelsUnknown(e)
+	return e.Reasonless || !e.Reasoning && len(e.Efforts) == 0 && !levelsUnknown(e)
 }
 
 // SaveGroup adds or replaces a group of the user's. Changing one magpie

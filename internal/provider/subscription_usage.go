@@ -127,6 +127,10 @@ type SubscriptionQuota struct {
 	// Resets are the rate-limit resets a Codex account holds, nil when it
 	// holds none (codex_resets.go).
 	Resets *ResetCredits `json:"resets,omitempty"`
+	// ResetsUsed are the Codex account's resets magpie spent, newest
+	// first, by itself or by hand (codex_resets_used.go): what the card
+	// says when one is gone and the user asks where
+	ResetsUsed []ResetUse `json:"resetsUsed,omitempty"`
 	// Held is set on a ChatGPT account the Codex app sends nothing for
 	// now (codexHeld): not on a window at 100% alone, which credits get
 	// past.
@@ -398,22 +402,30 @@ func fetchSubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 		}
 		return true
 	}
-	if p, ok := claudeAccount(); ok && !hidden["claude"] {
-		// signed out, Claude Code's own allowance is none: the account in
-		// its place is a saved one, read as the others are
-		if ls := accountsOf("claude"); len(ls) > 1 || p.Account.standIn {
-			fetches = append(fetches, perLogin(via("claude"), ls, accountCard("claude"))...)
-		} else {
-			fetches = append(fetches, withUser(ctx, p.Account.User, func() SubscriptionQuota {
-				return claudeSubscriptionUsage(viaLogin("claude", p.Account.User), p.Account.User)
-			}))
+	// what is switched off or removed is looked at no further: finding
+	// the account asks its CLI who is signed in (leftAlone)
+	if !hidden["claude"] {
+		if p, ok := claudeAccount(); ok {
+			// signed out, Claude Code's own allowance is none: the account
+			// in its place is a saved one, read as the others are
+			if ls := accountsOf("claude"); len(ls) > 1 || p.Account.standIn {
+				fetches = append(fetches, perLogin(via("claude"), ls, accountCard("claude"))...)
+			} else {
+				fetches = append(fetches, withUser(ctx, p.Account.User, func() SubscriptionQuota {
+					return claudeSubscriptionUsage(viaLogin("claude", p.Account.User), p.Account.User)
+				}))
+			}
 		}
 	}
-	if user, plan, ok := cursorIdentity(); !moved("cursor") && ok && !hidden["cursor"] {
-		fetches = append(fetches, withUser(ctx, user, func() SubscriptionQuota { return cursorSubscriptionUsage(viaLogin("cursor", user), plan) }))
+	if !moved("cursor") && !hidden["cursor"] {
+		if user, plan, ok := cursorIdentity(); ok {
+			fetches = append(fetches, withUser(ctx, user, func() SubscriptionQuota { return cursorSubscriptionUsage(viaLogin("cursor", user), plan) }))
+		}
 	}
-	if _, ok := grokAccount(); !moved("grok") && ok && !hidden["grok"] {
-		fetches = append(fetches, func() SubscriptionQuota { return keepReading(ctx, readNow(grokSubscriptionUsage(via("grok"))), "") })
+	if !moved("grok") && !hidden["grok"] {
+		if _, ok := grokAccount(); ok {
+			fetches = append(fetches, func() SubscriptionQuota { return keepReading(ctx, readNow(grokSubscriptionUsage(via("grok"))), "") })
+		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		if p, ok := codexAccount(home); ok && !hidden["codex"] {

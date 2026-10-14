@@ -278,9 +278,12 @@ func (p Price) CostSplit(input, output, cacheRead, cacheWrite, cacheWrite1h int)
 }
 
 type mdProvider struct {
-	ID     string             `json:"id"`
-	Name   string             `json:"name"`
-	Env    []string           `json:"env"`
+	ID   string   `json:"id"`
+	Name string   `json:"name"`
+	Env  []string `json:"env"`
+	// API is the base URL models.dev says the provider serves its models
+	// at (AMD's https://developer.amd.com.cn/radeon/api/v1)
+	API    string             `json:"api"`
 	Models map[string]mdModel `json:"models"`
 }
 
@@ -1288,9 +1291,9 @@ func DrawsID(id string) bool {
 	return false
 }
 
-// ImagesAPI is whether a model draws on an images API (/images/generations)
-// rather than answering in chat with pictures: gpt-image, dall-e, imagen,
-// flux, seedream… — not gemini-*-image or gpt-5-image, which chat.
+// ImagesAPI is whether a model draws on an images API rather than answering
+// in chat with pictures: gpt-image, dall-e, imagen, flux, seedream… — not
+// gemini-*-image or gpt-5-image, which chat.
 func ImagesAPI(id string) bool {
 	id = strings.ToLower(id)
 	for _, w := range []string{"gpt-image", "chatgpt-image", "dall-e", "imagen", "imagine", "qwen-image", "wanx", "wan2", "seedream", "cogview", "flux", "stable-diffusion", "sdxl", "kolors", "hidream"} {
@@ -1339,6 +1342,28 @@ func Drawers(id string) []Model {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+// AtEndpoint are the models.dev providers whose models are served at base
+// (their "api"), in order: the catalog of a provider the user added by its
+// endpoint alone. A trailing slash and the case of the address don't count.
+func AtEndpoint(base string) []string {
+	want := endpointKey(base)
+	if want == "" {
+		return nil
+	}
+	var ids []string
+	for id, p := range load() {
+		if endpointKey(p.API) == want {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func endpointKey(u string) string {
+	return strings.ToLower(strings.TrimRight(strings.TrimSpace(u), "/"))
 }
 
 // Providers returns models.dev provider ids known to the catalog.
