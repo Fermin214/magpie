@@ -168,3 +168,37 @@ were resolved by normal-user execution with an explicit browser cache path.
 Full Go/GUI suites, cross-platform builds, native WebView2, real-provider and
 installer checks were not rerun for this sync. No running application,
 configuration, remote branch or public release was changed.
+
+## Upstream sync - 2026-10-15
+
+Merged `upstream/main` at `d0ccbbeb`, incorporating 227 upstream commits and
+the changes through tag `v0.1.1247`. Upstream moved Routing and Usage into
+plugin pages and the final startup sequence into `assets/start.js`.
+Favorites follows that startup path: its independent view stays in the
+shell's title/visibility lists and `start.js`'s `OPEN_VIEWS`, while the old
+bootstrap is removed from `app.js`. The isolated Favorites implementation,
+Library control alignment and non-release updater protection are retained.
+
+Necessary validation passed on the merged source:
+
+- Sandboxed Go checks for Favorites storage, revision conflicts, corruption,
+  concurrent writes and import validation; the management-handler round trip;
+  embedded/versioned assets and plugin client loading; custom-build updater
+  protection. One Windows temporary-directory cleanup failed after its
+  assertions; that test passed when rerun alone.
+- Focused Chromium/WebKit checks for Favorites editing, import/export,
+  navigation, dirty drafts, narrow layouts and reopening the last page;
+  sidebar, gateway mode and plugin page/switch integration; Library control
+  alignment and translation completeness. Twelve Chromium checks initially
+  failed from sandbox browser-launch/download restrictions. Only those failed
+  checks were rerun as the normal user, and all passed. Browser API data is
+  fictional; no live configuration was used.
+- JavaScript syntax and Git whitespace/conflict checks. The Windows custom
+  build uses `build/agenthub-build.ps1`; its exact source, version and SHA-256
+  are recorded in `dist/agenthub-build.json`.
+
+Logs are retained in `.agenthub-work/sync-20261015-{go,go-recheck,ui,
+ui-recheck,build}.log`; `verify-sync-20261015.ps1` records the focused commands.
+Full Go/GUI suites, other-platform builds, native WebView2, real providers and
+installer checks were not rerun. This sync does not replace the running app,
+change live data, push remote branches or publish a release.

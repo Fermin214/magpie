@@ -23,12 +23,15 @@ const PLUGINS = [
   { id: "groups", name: "Routing groups", sub: "Several models agents pick as one: each request goes to the right one, and to the next when one fails", one: "1 group in use", many: "{n} groups in use" },
   { id: "library", name: "Library", sub: "Instructions, MCP servers, skills and hooks, kept once and given to every agent", one: "1 item given to agents", many: "{n} items given to agents" },
   { id: "otel", name: "Observability", sub: "Send each request's traces and metrics to an OpenTelemetry collector, such as Langfuse", one: "Sending to a collector", many: "Sending to a collector" },
+  { id: "rotation", name: "Routing strategies", sub: "The routings besides Smart: In order, In turn, Least used first, Weekly pace and By weight", one: "1 provider or group routed so", many: "{n} providers and groups routed so" },
+  { id: "routing", name: "Routing", sub: "Each request as the gateway routes it, the accounts it weighed and what each answered, and your routing groups", one: "1 group in use", many: "{n} groups in use" },
   { id: "sessions", name: "Sessions", sub: "Your agents' past conversations: read, search, resume and export them", one: "Recording gateway conversations", many: "Recording gateway conversations" },
+  { id: "usage", name: "Usage", sub: "Your allowances, what was spent and on what, each request, and what filled the context window" },
   { id: "warmups", name: "Warm-up and check-in", sub: "Start a subscription's usage window at a time you pick, and claim vendors' daily check-in credits", one: "1 warm-up or check-in on", many: "{n} warm-ups and check-ins on" },
 ];
-// a new install's (the Essentials preset): all off but the Gateway page,
-// which is essential, and two routing groups the user made
-const START = { gateway: [true, 0], groups: [false, 2], library: [false, 0], otel: [false, 0], sessions: [false, 0], warmups: [false, 0] };
+// a new install's (the Essentials preset): all off but the Gateway, Routing
+// and Usage pages and the routing strategies, which are essential, and two routing groups the user made
+const START = { gateway: [true, 0], groups: [false, 2], library: [false, 0], otel: [false, 0], rotation: [true, 0], routing: [true, 0], sessions: [false, 0], usage: [true, 0], warmups: [false, 0] };
 
 // the Gateway page's settings, as pluginrt.SchemaOf makes them
 const GATEWAY_SCHEMA = {
@@ -158,7 +161,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         if (lang !== "en") assert.notEqual(g.why, "2 groups in use", `${where}: why translated`);
         const gw = rows.find((r) => r.id === "gateway");
         assert.deepEqual([gw.on, gw.disabled], ["true", false], `${where}: the Gateway page, on`);
-        for (const r of rows.filter((r) => r.id !== "groups" && r.id !== "gateway")) assert.deepEqual([r.on, r.disabled, r.why], ["false", false, ""], `${where}: ${r.id}`);
+        const rt = rows.find((r) => r.id === "routing");
+        assert.deepEqual([rt.on, rt.disabled], ["true", false], `${where}: the Routing page, on`);
+        const ro = rows.find((r) => r.id === "rotation");
+        assert.deepEqual([ro.on, ro.disabled], ["true", false], `${where}: the routing strategies, on`);
+        const us = rows.find((r) => r.id === "usage");
+        assert.deepEqual([us.on, us.disabled], ["true", false], `${where}: the Usage page, on`);
+        for (const r of rows.filter((r) => !["groups", "gateway", "rotation", "routing", "usage"].includes(r.id))) assert.deepEqual([r.on, r.disabled, r.why], ["false", false, ""], `${where}: ${r.id}`);
         await page.locator('#builtinList [data-id="groups"] [role="switch"]').click({ force: true });
         await page.waitForTimeout(100);
         assert.deepEqual(posts, [], `${where}: a locked switch posts nothing`);
@@ -190,9 +199,24 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator('#builtinList [data-id="otel"] [role="switch"]').click();
         await page.waitForSelector('#builtinList [data-id="otel"] [aria-checked="true"]');
         assert.ok(await page.locator("#setTab-otel").evaluate((b) => getComputedStyle(b).display !== "none"), `${where}: Observability back`);
+        // Routing switched off: its tab and the panel's go, the page stays
+        await page.locator('#builtinList [data-id="routing"] [role="switch"]').click();
+        await page.waitForSelector('#builtinList [data-id="routing"] [aria-checked="false"]');
+        assert.deepEqual(posts.at(-1), ["routing", false], where);
+        if (width >= 800) assert.deepEqual(await tabs(page), ["agents", "library", ...KEPT.slice(1).filter((k) => k !== "routing")], `${where}: Routing gone`);
+        assert.deepEqual(await viewShown(page), ["view-plugins"], `${where}: Plugins stays`);
+        // and Usage: its tab goes
+        await page.locator('#builtinList [data-id="usage"] [role="switch"]').click();
+        await page.waitForSelector('#builtinList [data-id="usage"] [aria-checked="false"]');
+        assert.deepEqual(posts.at(-1), ["usage", false], where);
+        if (width >= 800) assert.deepEqual(await tabs(page), ["agents", "library", ...KEPT.slice(1).filter((k) => k !== "routing" && k !== "usage")], `${where}: Usage gone`);
+        assert.deepEqual(await viewShown(page), ["view-plugins"], `${where}: Plugins stays`);
         // Discover brings the search back
         await pluginTabs(page, side).nth(1).click();
         assert.ok(await page.locator("#view-plugins .pm-find").isVisible(), `${where}: search on Discover`);
+        // a way to Usage left somewhere (the tray's Open Usage) gives way to Agents
+        await page.evaluate(() => show("usage"));
+        assert.deepEqual(await viewShown(page), ["view-agents"], `${where}: no Usage page with it off`);
         assert.deepEqual(errors, [], where);
         await context.close();
       }

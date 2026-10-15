@@ -108,7 +108,8 @@ Only these existing implementation files need feature hooks:
 | File | Contract to recheck after merging upstream |
 | --- | --- |
 | assets/index.html | Grouped sidebar/header navigation with icon and translated span, hidden view, root-level versioned JS/CSS; script loads before app.js |
-| assets/app.js | View title/list, initial URL, load, leave/dismiss guards, shared modal, locale refresh, gateway-only exclusion |
+| assets/app.js | View title/list, load, leave/dismiss guards, shared modal, locale refresh, gateway-only exclusion |
+| assets/start.js | Favorites in OPEN_VIEWS for explicit URLs and last-page restoration after the plugin pages start |
 | assets/i18n.js | Favorites strings in every supported locale |
 | api.go | Route registration inside the management handler |
 
@@ -121,7 +122,8 @@ integration and build changes when reviewing the fork.
 The fork's Library control alignment follows upstream's files under
 `assets/plugins/library/`: `client.js` and `library.css`. Keep the kernel's
 plugin page lists and hooks when merging the shell, adding Favorites to its
-independent view lists, including `OPEN_VIEWS`.
+independent view lists. The startup sequence and `OPEN_VIEWS` now live in
+`assets/start.js`, loaded last; do not restore the old bootstrap in `app.js`.
 
 ## Verification
 
